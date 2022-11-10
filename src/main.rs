@@ -278,12 +278,17 @@ fn main() -> ! {
     psm.frce_off.modify(|_, w| w.proc1().clear_bit());
 
     let read_data: [u8; 4096] = *TEST.read();
+
     info!("Addr of flash block is {:x}", TEST.addr());
     info!("Contents start with {=[u8]}", read_data[0..4]);
     let mut data: [u8; 4096] = *TEST.read();
     data[0] = data[0].wrapping_add(1);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-    unsafe { TEST.write_flash(&data) };
+
+    if read_data[0] != 0x56 {
+        unsafe { TEST.write_flash(&data) };
+    }
+
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     let read_data: [u8; 4096] = *TEST.read();
     info!("Contents start with {=[u8]}", read_data[0..4]);
@@ -300,7 +305,6 @@ fn main() -> ! {
 
         delay.delay_ms(100);
         defmt::panic!("unexpected");
-        loop {}
     }
 
     loop {
