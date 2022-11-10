@@ -8,10 +8,7 @@ use core::cell::UnsafeCell;
 
 use arrayvec::ArrayVec;
 
-// use rp2040_hal as hal;
-use rp_pico as bsp;
-
-use hal::entry;
+use bsp::entry;
 use bsp::hal;
 use cortex_m::delay::Delay;
 use cortex_m::interrupt::Mutex;
@@ -25,10 +22,9 @@ use hal::gpio::bank0::*;
 use hal::gpio::{Output, Pin, PushPull};
 use hal::pac;
 // Pull in any important traits
-// use pac::Interrupt as interrupt;
-// use cortex_m::interrupt;
 use pac::interrupt;
 use panic_probe as _;
+use rp_pico::hal::prelude::*;
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usbd_human_interface_device::device::consumer::{
@@ -41,18 +37,9 @@ use usbd_human_interface_device::page::Consumer;
 use usbd_human_interface_device::page::Keyboard;
 use usbd_human_interface_device::prelude::*;
 
-
-/// The linker will place this boot block at the start of our program image. We
-/// need this to help the ROM bootloader get our code up and running.
-/// Note: This boot block is not necessary when using a rp-hal based BSP
-/// as the BSPs already perform this step.
-// #[link_section = ".boot2"]
-// #[used]
-// pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
-
-/// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
-/// if your board has a different frequency
-const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+// PIOExt for the split() method that is needed to bring
+// PIO0 into useable form for Ws2812:
+use rp_pico::hal::pio::PIOExt;
 
 // Import useful traits to handle the ws2812 LEDs:
 use smart_leds::{brightness, SmartLedsWrite, RGB8};
@@ -62,12 +49,7 @@ use ws2812_pio::Ws2812;
 
 const STRIP_LEN: usize = 4;
 
-// PIOExt for the split() method that is needed to bring
-// // PIO0 into useable form for Ws2812:
-
-use rp2040_hal::prelude::*;
-use rp2040_hal::pio::PIOExt;
-use rp2040_hal::Clock;
+use rp_pico as bsp;
 
 #[repr(C, align(4096))]
 struct FlashBlock {
@@ -143,7 +125,7 @@ fn main() -> ! {
 
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
     let clocks = hal::clocks::init_clocks_and_plls(
-        XTAL_FREQ_HZ,
+        bsp::XOSC_CRYSTAL_FREQ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -271,7 +253,7 @@ fn main() -> ! {
     ws.write(brightness(leds.iter().copied(), strip_brightness))
         .unwrap();
 
-        // delay.delay_ms(100);
+        delay.delay_ms(100);
 
 
     let psm = pac.PSM;
@@ -285,15 +267,15 @@ fn main() -> ! {
     psm.frce_off.modify(|_, w| w.proc1().clear_bit());
 
     let read_data: [u8; 4096] = *TEST.read();
-    // info!("Addr of flash block is {:x}", TEST.addr());
-    // info!("Contents start with {=[u8]}", read_data[0..4]);
+    info!("Addr of flash block is {:x}", TEST.addr());
+    info!("Contents start with {=[u8]}", read_data[0..4]);
     let mut data: [u8; 4096] = *TEST.read();
     data[0] = data[0].wrapping_add(1);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     unsafe { TEST.write_flash(&data) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     let read_data: [u8; 4096] = *TEST.read();
-    // info!("Contents start with {=[u8]}", read_data[0..4]);
+    info!("Contents start with {=[u8]}", read_data[0..4]);
 
     if read_data[0] != 0x56 {
         for (_, led) in leds.iter_mut().enumerate() {
@@ -306,7 +288,7 @@ fn main() -> ! {
             .unwrap();
 
         delay.delay_ms(100);
-        // defmt::panic!("unexpected");
+        defmt::panic!("unexpected");
         loop {}
     }
 
