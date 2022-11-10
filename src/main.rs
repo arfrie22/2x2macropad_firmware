@@ -1,6 +1,18 @@
 #![no_std]
 #![no_main]
 
+/// The linker will place this boot block at the start of our program image. We
+/// need this to help the ROM bootloader get our code up and running.
+/// Note: This boot block is not necessary when using a rp-hal based BSP
+/// as the BSPs already perform this step.
+#[link_section = ".boot2"]
+#[used]
+pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
+
+/// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
+/// if your board has a different frequency
+const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+
 use core::cell::{Cell, RefCell};
 use core::convert::Infallible;
 use core::default::Default;
@@ -8,8 +20,9 @@ use core::cell::UnsafeCell;
 
 use arrayvec::ArrayVec;
 
-use bsp::entry;
-use bsp::hal;
+use rp2040_hal as hal;
+
+use hal::entry;
 use cortex_m::delay::Delay;
 use cortex_m::interrupt::Mutex;
 use cortex_m::{prelude::*};
@@ -24,7 +37,7 @@ use hal::pac;
 // Pull in any important traits
 use pac::interrupt;
 use panic_probe as _;
-use rp_pico::hal::prelude::*;
+use hal::prelude::*;
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usbd_human_interface_device::device::consumer::{
@@ -39,7 +52,7 @@ use usbd_human_interface_device::prelude::*;
 
 // PIOExt for the split() method that is needed to bring
 // PIO0 into useable form for Ws2812:
-use rp_pico::hal::pio::PIOExt;
+use hal::pio::PIOExt;
 
 // Import useful traits to handle the ws2812 LEDs:
 use smart_leds::{brightness, SmartLedsWrite, RGB8};
@@ -48,8 +61,6 @@ use smart_leds::{brightness, SmartLedsWrite, RGB8};
 use ws2812_pio::Ws2812;
 
 const STRIP_LEN: usize = 4;
-
-use rp_pico as bsp;
 
 #[repr(C, align(4096))]
 struct FlashBlock {
@@ -125,7 +136,7 @@ fn main() -> ! {
 
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
     let clocks = hal::clocks::init_clocks_and_plls(
-        bsp::XOSC_CRYSTAL_FREQ,
+        XTAL_FREQ_HZ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
