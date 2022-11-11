@@ -13,39 +13,40 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
+use crc::{Crc, CRC_32_CKSUM};
+pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
+
+use core::cell::UnsafeCell;
 use core::cell::{Cell, RefCell};
 use core::convert::Infallible;
 use core::default::Default;
-use core::cell::UnsafeCell;
 
 use arrayvec::ArrayVec;
 
+use data_protocol::{DataCommand, PROTOCOL_VERSION};
+use hal::rom_data::reset_to_usb_boot;
 use rp2040_hal as hal;
 
-use hal::entry;
 use cortex_m::delay::Delay;
-use cortex_m::interrupt::Mutex;
-use cortex_m::{prelude::*};
+use cortex_m::prelude::*;
 use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::*;
 use frunk::HList;
 use fugit::{ExtU32, MicrosDurationU32};
+use hal::entry;
 use hal::gpio::bank0::*;
 use hal::gpio::{Output, Pin, PushPull};
 use hal::pac;
 // Pull in any important traits
-use pac::interrupt;
-use panic_probe as _;
 use hal::prelude::*;
+use panic_probe as _;
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usbd_human_interface_device::device::consumer::{
     ConsumerControlInterface, MultipleConsumerReport,
 };
-use usbd_human_interface_device::device::keyboard::{
-    NKROBootKeyboardInterface
-};
+use usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface;
 use usbd_human_interface_device::page::Consumer;
 use usbd_human_interface_device::page::Keyboard;
 use usbd_human_interface_device::prelude::*;
@@ -60,8 +61,11 @@ use smart_leds::{brightness, SmartLedsWrite, RGB8};
 // Import the actual crate to handle the Ws2812 protocol:
 use ws2812_pio::Ws2812;
 
+pub mod data_protocol;
+
 const STRIP_LEN: usize = 4;
 
+static mut backlight: [RGB8; STRIP_LEN] = [RGB8::new(0, 0, 0); STRIP_LEN];
 #[repr(C, align(4096))]
 struct FlashBlock {
     data: UnsafeCell<[u8; 4096]>,
@@ -69,6 +73,9 @@ struct FlashBlock {
 
 use crate::rp2040_flash::flash;
 pub mod rp2040_flash;
+
+pub mod raw_hid;
+use raw_hid::{GenericInOutInterface, GenericInOutMsg};
 
 impl FlashBlock {
     #[inline(never)]
@@ -102,9 +109,27 @@ impl FlashBlock {
 unsafe impl Sync for FlashBlock {}
 
 #[link_section = ".rodata"]
-static TEST: FlashBlock = FlashBlock {
+static MACRO_1: FlashBlock = FlashBlock {
     data: UnsafeCell::new([0x55u8; 4096]),
 };
+
+#[link_section = ".rodata"]
+static MACRO_2: FlashBlock = FlashBlock {
+    data: UnsafeCell::new([0x55u8; 4096]),
+};
+
+#[link_section = ".rodata"]
+static MACRO_3: FlashBlock = FlashBlock {
+    data: UnsafeCell::new([0x55u8; 4096]),
+};
+
+#[link_section = ".rodata"]
+static MACRO_4: FlashBlock = FlashBlock {
+    data: UnsafeCell::new([0x55u8; 4096]),
+};
+
+static MACROS: [&FlashBlock; KEY_COUNT] = [&MACRO_1, &MACRO_2, &MACRO_3, &MACRO_4];
+const MACRO_LENGTH: u16 = 4096 - 2;
 
 type UsbDevices = (
     UsbDevice<'static, hal::usb::UsbBus>,
@@ -113,16 +138,15 @@ type UsbDevices = (
         HList!(
             ConsumerControlInterface<'static, hal::usb::UsbBus>,
             NKROBootKeyboardInterface<'static, hal::usb::UsbBus>,
+            GenericInOutInterface<'static, hal::usb::UsbBus>
         ),
     >,
 );
 type LedPin = Pin<Gpio13, Output<PushPull>>;
 
-static IRQ_SHARED: Mutex<RefCell<Option<UsbDevices>>> = Mutex::new(RefCell::new(None));
-static USBCTRL: Mutex<Cell<Option<LedPin>>> = Mutex::new(Cell::new(None));
-
 const KEYBOARD_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
 const CONSUMER_POLL: MicrosDurationU32 = MicrosDurationU32::millis(50);
+const RAW_HID_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
 const LED_POLL: MicrosDurationU32 = MicrosDurationU32::millis(16);
 
 const KEY_COLS: usize = 2;
@@ -173,7 +197,10 @@ fn main() -> ! {
         USB_ALLOC.as_ref().unwrap()
     };
 
-    let composite = UsbHidClassBuilder::new()
+    let mut composite = UsbHidClassBuilder::new()
+        .add_interface(
+            raw_hid::GenericInOutInterface::default_config(),
+        )
         .add_interface(
             usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface::default_config(),
         )
@@ -184,18 +211,11 @@ fn main() -> ! {
         .build(usb_alloc);
 
     //https://pid.codes
-    let usb_dev = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0001))
+    let mut usb_dev = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0001))
         .manufacturer("usbd-human-interface-device")
-        .product("Keyboard & Consumer")
+        .product("Keyboard & Consumer & RawHid")
         .serial_number("TEST")
         .build();
-
-    cortex_m::interrupt::free(|cs| {
-        IRQ_SHARED.borrow(cs).replace(Some((usb_dev, composite)));
-        USBCTRL
-            .borrow(cs)
-            .replace(Some(pins.gpio13.into_push_pull_output()));
-    });
 
     let row_pins: &[&dyn InputPin<Error = core::convert::Infallible>] = &[
         &pins.gpio19.into_pull_down_input(),
@@ -214,16 +234,14 @@ fn main() -> ! {
     let mut keyboard_input_timer = timer.count_down();
     keyboard_input_timer.start(KEYBOARD_POLL);
 
+    let mut raw_hid_timer = timer.count_down();
+    raw_hid_timer.start(RAW_HID_POLL);
+
     let mut tick_timer = timer.count_down();
     tick_timer.start(1.millis());
 
     let mut led_timer = timer.count_down();
     led_timer.start(LED_POLL);
-
-    // Enable the USB interrupt
-    unsafe {
-        pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
-    };
 
     // Setup a delay for the LED blink signals:
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
@@ -247,7 +265,7 @@ fn main() -> ! {
         timer.count_down(),
     );
 
-    let mut leds: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
+    // let mut leds: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
     let mut t = 0.0;
 
     let strip_brightness = 64u8; // Limit brightness to 64/256
@@ -255,17 +273,20 @@ fn main() -> ! {
     // Slow down timer by this factor (0.1 will result in 10 seconds):
     let animation_speed = 0.1;
 
-    for (_, led) in leds.iter_mut().enumerate() {
-        *led = (0, 255, 0).into();
+    unsafe {
+        for (_, led) in backlight.iter_mut().enumerate() {
+            *led = (0, 255, 0).into();
+        }
     }
 
-    // Here the magic happens and the `leds` buffer is written to the
+    // Here the magic happens and the `backlight` buffer is written to the
     // ws2812 LEDs:
-    ws.write(brightness(leds.iter().copied(), strip_brightness))
-        .unwrap();
+    unsafe {
+        ws.write(brightness(backlight.iter().copied(), strip_brightness))
+            .unwrap();
+    }
 
-        delay.delay_ms(100);
-
+    delay.delay_ms(100);
 
     let psm = pac.PSM;
 
@@ -277,34 +298,39 @@ fn main() -> ! {
     }
     psm.frce_off.modify(|_, w| w.proc1().clear_bit());
 
-    let read_data: [u8; 4096] = *TEST.read();
+    for button in MACROS.iter() {
+        let read_data: [u8; 4096] = *button.read();
 
-    info!("Addr of flash block is {:x}", TEST.addr());
-    info!("Contents start with {=[u8]}", read_data[0..4]);
-    let mut data: [u8; 4096] = *TEST.read();
-    data[0] = data[0].wrapping_add(1);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
-    if read_data[0] != 0x56 {
-        unsafe { TEST.write_flash(&data) };
-    }
-
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-    let read_data: [u8; 4096] = *TEST.read();
-    info!("Contents start with {=[u8]}", read_data[0..4]);
-
-    if read_data[0] != 0x56 {
-        for (_, led) in leds.iter_mut().enumerate() {
-            *led = (255, 0, 0).into();
+        info!("Addr of flash block is {:x}", button.addr());
+        info!("Contents start with {=[u8]}", read_data[0..4]);
+        let mut data: [u8; 4096] = *button.read();
+        if read_data[0] != 0x56 {
+            data[0] = data[0].wrapping_add(1);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            unsafe { button.write_flash(&data) };
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
 
-        // Here the magic happens and the `leds` buffer is written to the
-        // ws2812 LEDs:
-        ws.write(brightness(leds.iter().copied(), strip_brightness))
-            .unwrap();
+        let read_data: [u8; 4096] = *button.read();
+        info!("Contents start with {=[u8]}", read_data[0..4]);
 
-        delay.delay_ms(100);
-        defmt::panic!("unexpected");
+        if read_data[0] != 0x56 {
+            unsafe {
+                for (_, led) in backlight.iter_mut().enumerate() {
+                    *led = (255, 0, 0).into();
+                }
+            }
+
+            // Here the magic happens and the `backlight` buffer is written to the
+            // ws2812 LEDs:
+            unsafe {
+                ws.write(brightness(backlight.iter().copied(), strip_brightness))
+                    .unwrap();
+            }
+
+            delay.delay_ms(100);
+            defmt::panic!("unexpected");
+        }
     }
 
     loop {
@@ -313,8 +339,6 @@ fn main() -> ! {
 
         if keyboard_input_timer.wait().is_ok() {
             cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
-                let (_, ref mut composite) = usb_ref.as_mut().unwrap();
                 let keys = get_keyboard_keys(&keys);
 
                 let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
@@ -330,10 +354,6 @@ fn main() -> ! {
         }
 
         if consumer_input_timer.wait().is_ok() {
-            cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
-                let (_, ref mut composite) = usb_ref.as_mut().unwrap();
-
                 let codes = get_consumer_codes(&keys);
                 let consumer_report = MultipleConsumerReport {
                     codes: [
@@ -356,15 +376,10 @@ fn main() -> ! {
                         }
                     };
                 }
-            });
         }
 
         //Tick once per ms
         if tick_timer.wait().is_ok() {
-            cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
-                let (_, ref mut composite) = usb_ref.as_mut().unwrap();
-
                 //Process any managed functionality
                 match composite
                     .interface::<NKROBootKeyboardInterface<'_, _>, _>()
@@ -376,47 +391,42 @@ fn main() -> ! {
                         core::panic!("Failed to process keyboard tick: {:?}", e)
                     }
                 };
-            });
+        }
+
+        if usb_dev.poll(&mut [&mut composite]) {
+            let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
+            match keyboard.read_report() {
+                Err(UsbError::WouldBlock) => {}
+                Err(e) => {
+                    core::panic!("Failed to read keyboard report: {:?}", e)
+                }
+                Ok(_) => {}
+            }
+
+                let raw_hid = composite.interface::<GenericInOutInterface<'_, _>, _>();
+                match raw_hid.read_report() {
+                    Err(UsbError::WouldBlock) => {}
+                    Err(e) => {
+                        core::panic!("Failed to read raw_hid report: {:?}", e)
+                    }
+                    Ok(data) => {
+                        match raw_hid.write_report(&parse_command(&data)) {
+                            Err(UsbHidError::WouldBlock) => {}
+                            Err(UsbHidError::Duplicate) => {}
+                            Ok(_) => {}
+                            Err(e) => {
+                                core::panic!("Failed to write raw_hid report: {:?}", e)
+                            }
+                        };
+                    }
+                }
         }
 
         if led_timer.wait().is_ok() {
-            for (i, led) in leds.iter_mut().enumerate() {
-                // An offset to give 3 consecutive LEDs a different color:
-                let hue_offs = match i % 4 {
-                    1 => 0.25,
-                    2 => 0.5,
-                    3 => 0.75,
-                    _ => 0.0,
-                };
-
-                let sin_11 = sin((t + hue_offs) * 2.0 * core::f32::consts::PI);
-                // Bring -1..1 sine range to 0..1 range:
-                let sin_01 = (sin_11 + 1.0) * 0.5;
-
-                let hue = 360.0 * sin_01;
-                let sat = 1.0;
-                let val = 1.0;
-
-                let rgb = if keys[i] {
-                    hsv2rgb_u8(hue, sat, val)
-                } else {
-                    (0, 0, 0)
-                };
-
-                *led = rgb.into();
-            }
-
-            // Here the magic happens and the `leds` buffer is written to the
-            // ws2812 LEDs:
-            ws.write(brightness(leds.iter().copied(), strip_brightness))
-                .unwrap();
-
-            // Increase the time counter variable and make sure it
-            // stays inbetween 0.0 to 1.0 range:
-            t += (LED_POLL.to_millis() as f32 / 1000.0) * animation_speed;
-            while t > 1.0 {
-                t -= 1.0;
-            }
+            unsafe {
+                ws.write(brightness(backlight.iter().copied(), strip_brightness))
+                    .unwrap();
+            };
         }
     }
 }
@@ -453,43 +463,6 @@ pub fn hsv2rgb_u8(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     )
 }
 
-//noinspection Annotator
-#[allow(non_snake_case)]
-#[interrupt]
-fn USBCTRL_IRQ() {
-    static mut LED_PIN: Option<LedPin> = None;
-    if LED_PIN.is_none() {
-        cortex_m::interrupt::free(|cs| {
-            *LED_PIN = USBCTRL.borrow(cs).take();
-        });
-    }
-
-    cortex_m::interrupt::free(|cs| {
-        let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
-        if usb_ref.is_none() {
-            return;
-        }
-
-        let (ref mut usb_device, ref mut composite) = usb_ref.as_mut().unwrap();
-        if usb_device.poll(&mut [composite]) {
-            let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
-            match keyboard.read_report() {
-                Err(UsbError::WouldBlock) => {}
-                Err(e) => {
-                    core::panic!("Failed to read keyboard report: {:?}", e)
-                }
-                Ok(leds) => {
-                    LED_PIN
-                        .as_mut()
-                        .map(|p| p.set_state(PinState::from(leds.num_lock)).ok());
-                }
-            }
-        }
-    });
-
-    cortex_m::asm::sev();
-}
-
 fn scan_matrix(
     delay: &mut Delay,
     col_pins: &mut [&mut dyn OutputPin<Error = Infallible>],
@@ -511,28 +484,28 @@ fn scan_matrix(
     keys
 }
 
-fn get_keyboard_keys(keys: &[bool]) -> ArrayVec::<Keyboard, 32> {
+fn get_keyboard_keys(keys: &[bool]) -> ArrayVec<Keyboard, 32> {
     let mut array = ArrayVec::<Keyboard, 32>::new();
-    
-    if keys[0] {
+
+    if keys[0] && MACRO_1.read()[1] == 1 {
         array.push(Keyboard::A);
     } else {
         array.push(Keyboard::NoEventIndicated);
     }
 
-    if keys[1] {
+    if keys[1] && MACRO_1.read()[1] == 1 {
         array.push(Keyboard::C);
     } else {
         array.push(Keyboard::NoEventIndicated);
     }
 
-    if keys[2] {
+    if keys[2] && MACRO_1.read()[1] == 1 {
         array.push(Keyboard::B);
     } else {
         array.push(Keyboard::NoEventIndicated);
     }
 
-    if keys[3] {
+    if keys[3] && MACRO_1.read()[1] == 1 {
         array.push(Keyboard::D);
     } else {
         array.push(Keyboard::NoEventIndicated);
@@ -554,4 +527,124 @@ fn get_consumer_codes(keys: &[bool]) -> [Consumer; 2] {
             Consumer::Unassigned
         },
     ]
+}
+
+fn parse_command(data: &GenericInOutMsg) -> GenericInOutMsg {
+    unsafe {
+        for (_, led) in backlight.iter_mut().enumerate() {
+            *led = (0, 0, 0).into();
+        }
+    };
+
+    let mut output = data.packet.clone();
+    let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
+
+    match command {
+        DataCommand::GetProtocolVersion => {
+            output[1] = (PROTOCOL_VERSION >> 8) as u8;
+            output[2] = PROTOCOL_VERSION as u8;
+        }
+
+        DataCommand::ReadMacro => {
+            let index = output[1] as usize;
+            if index < KEY_COUNT {
+                let offset = ((output[1] as u16) << 8) | output[2] as u16;
+                if offset < MACRO_LENGTH {
+                    let length = output[3] as usize;
+                    if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
+                        let macro_data: [u8; 4096] = *MACROS[index].read();
+                        output[4..].copy_from_slice(
+                            &macro_data[(offset + 2) as usize..(offset as usize + length + 2)],
+                        );
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                } else {
+                    output[0] = DataCommand::Error as u8;
+                }
+            } else {
+                output[0] = DataCommand::Error as u8;
+            }
+        }
+
+        DataCommand::WriteMacro => {
+            let index = output[1] as usize;
+            if index < KEY_COUNT {
+                let offset = ((output[1] as u16) << 8) | output[2] as u16;
+                if offset < MACRO_LENGTH {
+                    let length = output[3] as usize;
+                    if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
+                        let mut macro_data: [u8; 4096] = *MACROS[index].read();
+                        macro_data[1] = 0;
+                        macro_data[(offset + 2) as usize..(offset as usize + length + 2)]
+                            .copy_from_slice(&output[4..]);
+                        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+                        unsafe { MACROS[index].write_flash(&macro_data) };
+                        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                } else {
+                    output[0] = DataCommand::Error as u8;
+                }
+            } else {
+                output[0] = DataCommand::Error as u8;
+            }
+        }
+
+        DataCommand::ValidateMacro => {
+            unsafe {
+                for (_, led) in backlight.iter_mut().enumerate() {
+                    *led = (255, 0, 255).into();
+                }
+            };
+            let index = output[1] as usize;
+            if index < KEY_COUNT {
+                let valid_checksum = ((output[2] as u32) << 24) | ((output[3] as u32) << 16) | ((output[4] as u32) << 8) | output[5] as u32;
+                let mut macro_data: [u8; 4096] = *MACROS[index].read();
+                let checksum = CKSUM.checksum(&macro_data[2..]);
+                output[6] = (checksum >> 24) as u8;
+                output[7] = (checksum >> 16) as u8;
+                output[8] = (checksum >> 8) as u8;
+                output[9] = checksum as u8;
+                if checksum == valid_checksum {
+                    macro_data[1] = 1;
+                    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+                    unsafe { (*MACROS[index]).write_flash(&macro_data) };
+
+                    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+                } else {
+                    output[0] = DataCommand::Error as u8;
+                }
+            } else {
+                output[0] = DataCommand::Error as u8;
+            }
+        }
+
+        DataCommand::GetLed => {}
+
+        DataCommand::SetLed => {}
+
+        DataCommand::GetPortName => {}
+
+        DataCommand::EnterBootloader => {
+            reset_to_usb_boot(0, 0);
+        }
+
+        DataCommand::Error => {
+            output[0] = DataCommand::Error as u8;
+        }
+    }
+
+    if output[0] == DataCommand::Error as u8 {
+        unsafe {
+            for (_, led) in backlight.iter_mut().enumerate() {
+                *led = (255, 0, 0).into();
+            }
+        }
+    }
+
+    GenericInOutMsg { packet: output }
 }
