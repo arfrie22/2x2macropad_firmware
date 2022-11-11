@@ -484,7 +484,6 @@ fn scan_matrix(
     keys
 }
 
-
 fn get_keyboard_keys(keys: &[bool]) -> ArrayVec<Keyboard, 32> {
     let mut array = ArrayVec::<Keyboard, 32>::new();
 
