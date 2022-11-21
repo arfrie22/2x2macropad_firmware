@@ -18,7 +18,7 @@ use hal::timer::CountDown;
 use packed_struct::prelude::*;
 pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
-use core::cell::RefCell;
+
 use core::cell::UnsafeCell;
 use core::convert::Infallible;
 use core::default::Default;
@@ -134,7 +134,8 @@ impl FlashBlock {
 
     fn clear_flash(&self) {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-        unsafe { self.write_flash(&[0; 4096]); }
+        let data = [0u8; 4096];
+        unsafe { self.write_flash(&data); }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 
@@ -274,7 +275,7 @@ fn get_config() -> Config {
         
     let config = Config::default();
     let mut data = [0; 4096];
-    data[0..4094].copy_from_slice(&config.pack().unwrap());
+    data[0..4092].copy_from_slice(&config.pack().unwrap());
     unsafe{CONFIG.write_flash(&data);}
     CONFIG.set_checksum();
     config
@@ -440,7 +441,7 @@ fn main() -> ! {
         &pins.gpio18.into_pull_down_input(),
     ];
 
-    let mut col_pins: &mut [&mut dyn OutputPin<Error = core::convert::Infallible>] = &mut [
+    let col_pins: &mut [&mut dyn OutputPin<Error = core::convert::Infallible>] = &mut [
         &mut pins.gpio21.into_push_pull_output(),
         &mut pins.gpio20.into_push_pull_output(),
     ];
@@ -494,7 +495,6 @@ fn main() -> ! {
     );
 
     let mut backlight: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
-    let mut t = 0.0;
 
     let strip_brightness = 64u8; // Limit brightness to 64/256
 
@@ -504,9 +504,9 @@ fn main() -> ! {
 
     ws.write(brightness(backlight.iter().copied(), strip_brightness))
         .unwrap();
-    
 
-    // delay.delay_ms(100);
+
+    delay.delay_ms(100);
 
     let psm = pac.PSM;
 
@@ -518,9 +518,13 @@ fn main() -> ! {
     }
     psm.frce_off.modify(|_, w| w.proc1().clear_bit());
 
+    
+
     if !CONFIG.validate() {
         CONFIG.initialize_flash();
     }
+
+    
 
     for key in MACROS.iter() {
         for t in MacroType::iter() {
@@ -555,10 +559,12 @@ fn main() -> ! {
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
+                    // match KeyState::Tap {
                         KeyState::Tap => {
                             current_macro = Some(&MACROS[i].tap);
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
+                            backlight[i] = (255, 0, 0).into();
                             break;
                         }
 
@@ -566,6 +572,7 @@ fn main() -> ! {
                             current_macro = Some(&MACROS[i].hold);
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
+                            backlight[i] = (0, 255, 0).into();
                             break;
                         }
 
@@ -573,6 +580,7 @@ fn main() -> ! {
                             current_macro = Some(&MACROS[i].ttap);
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
+                            backlight[i] = (0, 255, 255).into();
                             break;
                         }
 
@@ -580,6 +588,7 @@ fn main() -> ! {
                             current_macro = Some(&MACROS[i].thold);
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
+                            backlight[i] = (255, 255, 0).into();
                             break;
                         }
 
@@ -673,8 +682,9 @@ fn main() -> ! {
                     core::panic!("Failed to read raw_hid report: {:?}", e)
                 }
                 Ok(data) => {
-                    raw_hid_queue.push(parse_command(&data));
-                    raw_hid_queue.push(parse_command(&data));
+                    let data = parse_command(&data, &mut config);
+                    raw_hid_queue.push(data);
+                    raw_hid_queue.push(data);
                 }
             }
         }
@@ -747,14 +757,14 @@ fn get_key_states(
     previous_key_state: &[KeyState; KEY_COUNT],
     config: &Config,
 ) -> [KeyState; KEY_COUNT] {
-    let mut key_states = (*previous_key_state).clone();
+    let mut key_states = *previous_key_state;
 
     for i in 0..KEY_COUNT {
         match previous_key_state[i] {
             KeyState::Idle => {
                 if keys[i] {
                     key_states[i] = KeyState::Intermediate;
-                    key_timers[i].start(MicrosDurationU32::millis(config.hold_speed));
+                    key_timers[i].start(MicrosDurationU32::micros(config.hold_speed));
                 }
             }
             KeyState::Intermediate => {
@@ -764,17 +774,15 @@ fn get_key_states(
                     }
                 } else {
                     key_states[i] = KeyState::TapIntermediate;
-                    key_timers[i].start(MicrosDurationU32::millis(config.tap_speed));
+                    key_timers[i].start(MicrosDurationU32::micros(config.tap_speed));
                 }
             }
             KeyState::TapIntermediate => {
                 if keys[i] {
                     key_states[i] = KeyState::TTapIntermediate;
-                    key_timers[i].start(MicrosDurationU32::millis(config.hold_speed));
-                } else {
-                    if key_timers[i].wait().is_ok() {
-                        key_states[i] = KeyState::Tap;
-                    }
+                    key_timers[i].start(MicrosDurationU32::micros(config.hold_speed));
+                } else if key_timers[i].wait().is_ok() {
+                    key_states[i] = KeyState::Tap;
                 }
             }
             KeyState::TTapIntermediate => {
@@ -808,48 +816,21 @@ fn read_macro(
     backlight: &mut [RGB8; STRIP_LEN],
 
 ) -> (usize, ArrayVec<Keyboard, 32>, ArrayVec<Consumer, 4>, Option<MicrosDurationU32>) {
-    let mut keys = ArrayVec::<Keyboard, 32>::new();
-    let mut consumers = ArrayVec::<Consumer, 4>::new();
+    let keys = ArrayVec::<Keyboard, 32>::new();
+    let consumers = ArrayVec::<Consumer, 4>::new();
     let mut offset = current_offset;
     let mut delay = None;
 
-    for (_, led) in backlight.iter_mut().enumerate() {
-        *led = (0, 0, 0).into();
-    }
+    // for (_, led) in backlight.iter_mut().enumerate() {
+    //     *led = (0, 0, 0).into();
+    // }
 
 
     (offset, keys, consumers, delay)
 }
 
-fn get_keyboard_keys(keys: &[bool]) -> ArrayVec<Keyboard, 32> {
-    let mut array = ArrayVec::<Keyboard, 32>::new();
-
-    if keys[0] {
-        array.push(Keyboard::A);
-    } else {
-        array.push(Keyboard::NoEventIndicated);
-    }
-
-    array
-}
-
-fn get_consumer_codes(keys: &[bool]) -> [Consumer; 2] {
-    [
-        if keys[0] {
-            Consumer::VolumeDecrement
-        } else {
-            Consumer::Unassigned
-        },
-        if keys[3] {
-            Consumer::VolumeIncrement
-        } else {
-            Consumer::Unassigned
-        },
-    ]
-}
-
-fn parse_command(data: &GenericInOutMsg) -> GenericInOutMsg {
-    let mut output = data.packet.clone();
+fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg {
+    let mut output = data.packet;
     let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
 
     match command {
