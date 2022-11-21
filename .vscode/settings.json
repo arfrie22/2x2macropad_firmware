@@ -1,0 +1,13 @@
+{
+    "rust-analyzer.checkOnSave.allTargets": false,
+    "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
+    "rust-analyzer.checkOnSave.overrideCommand": [
+        "cargo",
+        "clippy",
+        "--message-format=json",
+        "--bins",
+        "--all-features",
+        "--target",
+        "thumbv6m-none-eabi",
+    ],
+}

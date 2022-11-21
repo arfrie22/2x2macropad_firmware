@@ -4,6 +4,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 
 #[repr(u8)]
 pub enum DataCommand {
+    None = 0x00,
     GetProtocolVersion = 0x01,
     ReadMacro = 0x02,
     WriteMacro = 0x03,
@@ -20,7 +21,7 @@ pub enum DataCommand {
 
 impl DataCommand {
     pub fn from_u8(n: u8) -> Option<DataCommand> {
-        if (n >= 0x1 && n <= 0x06) || (n >= 0xFD) {
+        if (n <= 0x06) || (n >= 0xFD) {
             Some(unsafe { mem::transmute(n) })
         } else {
             None

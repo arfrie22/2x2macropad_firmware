@@ -22,7 +22,7 @@ use usbd_human_interface_device::UsbHidError;
 #[rustfmt::skip]
 pub const GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,       // Usage Page (Vender),
-    0x09, 0x02,       // Usage (0x01),
+    0x09, 0x02,       // Usage (0x02),
     0xA1, 0x01,       // Collection (Application),
     // Input
     0x09, 0x02,       //   Usage (0x02),
