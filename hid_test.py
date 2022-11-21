@@ -24,6 +24,7 @@ for vid in  USB_VID:
                 # dev.write(b'\xFF' * 64)
                 # str_out = b'\x04' + b'\x00' + b'\x00' * 62
                 str_out = b'\x04\x00\xc98ts'
+                str_out = b'\x04\x00'
                 print("Sending to HID Device:", str_out, '\n')
                 dev.write(str_out)
                 str_in = dev.read(64, 500)
