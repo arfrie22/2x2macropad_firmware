@@ -15,10 +15,10 @@ const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 use crc::{Crc, CRC_32_CKSUM};
 use data_protocol::ConfigElements;
-use data_protocol::LedGetCommand;
-use data_protocol::LedSetCommand;
+use data_protocol::LedCommand;
 
 use hal::timer::CountDown;
+use led_effect::LedConfig;
 use led_effect::LedEffect;
 use led_effect::STRIP_LEN;
 use macro_protocol::MacroCommand;
@@ -84,7 +84,6 @@ struct FlashBlock {
     data: UnsafeCell<[u8; 4096]>,
 }
 
-use crate::led_effect::Led;
 use crate::rp2040_flash::flash;
 pub mod rp2040_flash;
 
@@ -252,7 +251,7 @@ impl KeyMacro {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PackedStruct)]
+#[derive(Clone, Copy, Debug, PartialEq, PackedStruct)]
 #[packed_struct(size_bytes = "4092")]
 struct Config {
     #[packed_field(endian = "lsb")]
@@ -261,6 +260,21 @@ struct Config {
     tap_speed: u32,
     #[packed_field(endian = "lsb")]
     hold_speed: u32,
+    #[packed_field(endian = "lsb")]
+    default_delay: u32,
+    #[packed_field(element_size_bytes = "13")]
+    led_config: LedConfig,
+}
+
+impl Config {
+    pub fn write(&self) {
+        let mut data = [0; 4096];
+        data[0..4092].copy_from_slice(&self.pack().unwrap());
+        unsafe {
+            CONFIG.write_flash(&data);
+        }
+        CONFIG.set_checksum();
+    }
 }
 
 impl Default for Config {
@@ -269,6 +283,8 @@ impl Default for Config {
             version: PROTOCOL_VERSION,
             tap_speed: MicrosDurationU32::millis(200).to_micros(),
             hold_speed: MicrosDurationU32::millis(500).to_micros(),
+            default_delay: MicrosDurationU32::millis(100).to_micros(),
+            led_config: LedConfig::default(),
         }
     }
 }
@@ -288,12 +304,7 @@ fn get_config() -> Config {
     }
 
     let config = Config::default();
-    let mut data = [0; 4096];
-    data[0..4092].copy_from_slice(&config.pack().unwrap());
-    unsafe {
-        CONFIG.write_flash(&data);
-    }
-    CONFIG.set_checksum();
+    config.write();
     config
 }
 
@@ -510,26 +521,6 @@ fn main() -> ! {
         timer.count_down(),
     );
 
-    let mut backlight: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
-    let mut leds = [Led::default(); STRIP_LEN];
-    // let mut led_base_colors: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
-    // let mut led_effects: [LedEffect; STRIP_LEN] = [LedEffect::None; STRIP_LEN];
-    // let mut led_brightnesses = [0u8; STRIP_LEN];
-    // let mut leds[index].effect_speed = [0u8; STRIP_LEN];
-    // let mut led_offsets = [0u8; STRIP_LEN];
-
-    let strip_brightness = 64u8; // Limit brightness to 64/256
-    let mut time = 0u32;
-
-    for (_, led) in backlight.iter_mut().enumerate() {
-        *led = (0, 0, 0).into();
-    }
-
-    ws.write(brightness(backlight.iter().copied(), strip_brightness))
-        .unwrap();
-
-    delay.delay_ms(100);
-
     let psm = pac.PSM;
 
     // Reset core1 so it's guaranteed to be running
@@ -552,10 +543,14 @@ fn main() -> ! {
                 data[0] = MacroCommand::CommandConsumer as u8;
                 data[1..=2].copy_from_slice(&(Consumer::VolumeIncrement as u16).to_le_bytes());
                 data[3] = MacroCommand::CommandDelay as u8;
-                // data[3] = 0xFF;
+                data[3] = 0;
                 data[5] = 0xFF;
-                // data[5] = 0xFF;
-                // data[6] = 0xFF;
+                data[5] = 0;
+                data[6] = 0;
+                data[7] = MacroCommand::CommandSetLed as u8;
+                data[8] = 0;
+                data[9] = 0xFF;
+                data[10] = 0xFF;
 
                 key.write_flash(&t, &data);
                 key.set_checksum(&t)
@@ -563,8 +558,20 @@ fn main() -> ! {
         }
     }
 
-    let mut raw_hid_queue = ArrayVec::<GenericInOutMsg, 32>::new();
+    let mut backlight: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
+    let mut time = 0u32;
+
+    for (_, led) in backlight.iter_mut().enumerate() {
+        *led = (0, 0, 0).into();
+    }
+
     let mut config = get_config();
+    ws.write(brightness(backlight.iter().copied(), config.led_config.brightness))
+        .unwrap();
+
+    // delay.delay_ms(100);
+
+    let mut raw_hid_queue = ArrayVec::<GenericInOutMsg, 32>::new();
     let mut previous_key_states = [KeyState::Idle; 4];
 
     let mut current_macro = None;
@@ -607,7 +614,7 @@ fn main() -> ! {
                 }
 
                 current_offset = new_offset;
-                macro_delay.start(delay.unwrap_or(MicrosDurationU32::millis(0)));
+                macro_delay.start(delay.unwrap_or_else( || MicrosDurationU32::micros(config.default_delay)));
 
                 key_change = true;
 
@@ -747,7 +754,6 @@ fn main() -> ! {
                     let data = parse_command(
                         &data,
                         &mut config,
-                        &mut leds,
                     );
                     raw_hid_queue.push(data);
                     raw_hid_queue.push(data);
@@ -756,18 +762,7 @@ fn main() -> ! {
         }
 
         if led_timer.wait().is_ok() {
-            for i in 0..STRIP_LEN {
-                // led_effects[i] = LedEffect::ColorCycle;
-                // leds[index].effect_speed[i] = i as u8 * 0x10;
-                leds[i].effect.apply(
-                    time,
-                    &mut backlight[i],
-                    &mut leds[i],
-                );
-                if time % (leds[i].effect_speed as u32 + 1) == 0 {
-                    leds[i].effect_offset = leds[i].effect_offset.wrapping_add(1);
-                }
-            }
+            config.led_config.update(&mut backlight);
 
             if let Some(led) = macro_backlight {
                 backlight[current_macro_index] = led;
@@ -777,7 +772,7 @@ fn main() -> ! {
 
             ws.write(brightness(
                 gamma(backlight.iter().copied()),
-                strip_brightness,
+                config.led_config.brightness,
             ))
             .unwrap();
         };
@@ -893,10 +888,10 @@ fn read_macro(
         is_done = true;
         offset = 0;
         *keys = [Keyboard::NoEventIndicated; 256];
+        *backlight = None;
     }
 
     while current_macro != MacroCommand::CommandTerminator {
-        *backlight = Some((255, 0, 255).into());
         offset += 1;
         match current_macro {
             MacroCommand::CommandTerminator => {}
@@ -967,7 +962,6 @@ fn read_macro(
 fn parse_command(
     data: &GenericInOutMsg,
     config: &mut Config,
-    leds: &mut [Led; STRIP_LEN],
 ) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
@@ -1088,6 +1082,12 @@ fn parse_command(
                     output[4] = (config.hold_speed >> 8) as u8;
                     output[5] = config.hold_speed as u8;
                 },
+                ConfigElements::DefaultDelay => {
+                    output[2] = (config.default_delay >> 24) as u8;
+                    output[3] = (config.default_delay >> 16) as u8;
+                    output[4] = (config.default_delay >> 8) as u8;
+                    output[5] = config.default_delay as u8;
+                },
                 ConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = ConfigElements::Error as u8;
@@ -1110,12 +1110,7 @@ fn parse_command(
                         | output[5] as u32;
                     if new_tap_speed > 0 {
                         config.tap_speed = new_tap_speed;
-                        let mut data = [0; 4096];
-                        data[0..4092].copy_from_slice(&config.pack().unwrap());
-                        unsafe {
-                            CONFIG.write_flash(&data);
-                        }
-                        CONFIG.set_checksum();
+                        
                     } else {
                         output[0] = DataCommand::Error as u8;
                         output[1] = ConfigElements::Error as u8;
@@ -1128,12 +1123,20 @@ fn parse_command(
                         | output[5] as u32;
                     if new_hold_speed > 0 {
                         config.hold_speed = new_hold_speed;
-                        let mut data = [0; 4096];
-                        data[0..4092].copy_from_slice(&config.pack().unwrap());
-                        unsafe {
-                            CONFIG.write_flash(&data);
-                        }
-                        CONFIG.set_checksum();
+                        config.write()
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = ConfigElements::Error as u8;
+                    }
+                },
+                ConfigElements::DefaultDelay => {
+                    let new_default_delay = ((output[2] as u32) << 24)
+                        | ((output[3] as u32) << 16)
+                        | ((output[4] as u32) << 8)
+                        | output[5] as u32;
+                    if new_default_delay > 0 {
+                        config.default_delay = new_default_delay;
+                        config.write()
                     } else {
                         output[0] = DataCommand::Error as u8;
                         output[1] = ConfigElements::Error as u8;
@@ -1147,209 +1150,75 @@ fn parse_command(
         }
 
         DataCommand::GetLed => {
-            let led_command = LedGetCommand::from_u8(output[1]).unwrap_or(LedGetCommand::Error);
+            let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
 
             match led_command {
-                LedGetCommand::None => {},
-                LedGetCommand::GetSingleBaseColor => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        let color = leds[index].base_color;
-                        output[3] = color.r;
-                        output[4] = color.g;
-                        output[5] = color.b;
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = LedGetCommand::Error as u8;
-                    }
+                LedCommand::None => {},
+                LedCommand::BaseColor => {
+                    let color = config.led_config.base_color;
+                    output[2] = color.r;
+                    output[3] = color.g;
+                    output[4] = color.b;
                 },
-                LedGetCommand::GetSingleEffect => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        output[3] = leds[index].effect as u8;
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = LedGetCommand::Error as u8;
-                    }
+                LedCommand::Effect => {
+                    output[2] = config.led_config.effect as u8;
                 },
-                LedGetCommand::GetSingleBrightness => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        output[3] = leds[index].brightness;
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = LedGetCommand::Error as u8;
-                    }
+                LedCommand::Brightness => {
+                    output[2] = config.led_config.brightness;
                 },
-                LedGetCommand::GetSingleEffectSpeed => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        output[3] = leds[index].effect_speed;
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = LedGetCommand::Error as u8;
-                    }
+                LedCommand::EffectSpeed => {
+                    output[2..6].copy_from_slice(&config.led_config.effect_speed.to_le_bytes());
                 },
-                LedGetCommand::GetSingleEffectOffset => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        output[3] = leds[index].effect_offset;
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = LedGetCommand::Error as u8;
-                    }
+                LedCommand::EffectOffset => {
+                    output[2..6].copy_from_slice(&config.led_config.effect_offset.to_le_bytes());
                 },
-                LedGetCommand::GetAllBaseColor => {
-                    for i in 0..STRIP_LEN {
-                        output[2 + i * 3] = leds[i].base_color.r;
-                        output[3 + i * 3] = leds[i].base_color.g;
-                        output[4 + i * 3] = leds[i].base_color.b;
-                    }
-                },
-                LedGetCommand::GetAllEffect => {
-                    for i in 0..STRIP_LEN {
-                        output[2 + i] = leds[i].effect as u8;
-                    }
-                },
-                LedGetCommand::GetAllBrightness => {
-                    for i in 0..STRIP_LEN {
-                        output[2 + i] = leds[i].brightness;
-                    }
-                },
-                LedGetCommand::GetAllEffectSpeed => {
-                    for i in 0..STRIP_LEN {
-                        output[2 + i] = leds[i].effect_speed;
-                    }
-                },
-                LedGetCommand::GetAllEffectOffset => {
-                    for i in 0..STRIP_LEN {
-                        output[2 + i] = leds[i].effect_offset;
-                    }
-                },
-                LedGetCommand::Error => {
+                LedCommand::Error => {
                     output[0] = DataCommand::Error as u8;
-                    output[1] = LedGetCommand::Error as u8;
+                    output[1] = LedCommand::Error as u8;
                 },
             }
         }
 
         DataCommand::SetLed => {
-            let led_command = LedSetCommand::from_u8(output[1]).unwrap_or(LedSetCommand::Error);
+            let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
 
             match led_command {
-                LedSetCommand::None => {}
-                LedSetCommand::SetSingleBaseColor => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        leds[index].base_color = RGB8 {
-                            r: output[3],
-                            g: output[4],
-                            b: output[5],
-                        };
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                    }
+                LedCommand::None => {}
+                LedCommand::BaseColor => {
+                    config.led_config.base_color = RGB8 {
+                        r: output[2],
+                        g: output[3],
+                        b: output[4],
+                    };
+
+                    config.write();
                 }
-                LedSetCommand::SetSingleEffect => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        leds[index].effect =
-                            LedEffect::from_u8(output[3]).unwrap_or(LedEffect::None);
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                    }
+                LedCommand::Effect => {
+                    config.led_config.effect =
+                            LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
+
+                    config.write();
                 }
-                LedSetCommand::SetSingleBrightness => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        leds[index].brightness = output[3];
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                    }
+                LedCommand::Brightness => {
+                    config.led_config.brightness = output[2];
+
+                    config.write();
                 }
-                LedSetCommand::SetSingleEffectSpeed => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        leds[index].effect_speed = output[3];
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                    }
+                LedCommand::EffectSpeed => {
+                    config.led_config.effect_speed =
+                            f32::from_le_bytes(output[2..6].try_into().unwrap());
+
+                    config.write();
                 }
-                LedSetCommand::SetSingleEffectOffset => {
-                    let index = output[2] as usize;
-                    if index < STRIP_LEN {
-                        leds[index].effect_offset = output[3];
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                    }
+                LedCommand::EffectOffset => {
+                    config.led_config.effect_offset =
+                        f32::from_le_bytes(output[2..6].try_into().unwrap());
+
+                    config.write();
                 }
-                LedSetCommand::SetMultipleBaseColor => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].base_color = RGB8 {
-                            r: output[3 * index + 2],
-                            g: output[3 * index + 3],
-                            b: output[3 * index + 4],
-                        };
-                    }
-                }
-                LedSetCommand::SetMultipleEffect => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].effect =
-                            LedEffect::from_u8(output[index + 2]).unwrap_or(LedEffect::None);
-                    }
-                }
-                LedSetCommand::SetMultipleBrightness => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].brightness = output[index + 2];
-                    }
-                }
-                LedSetCommand::SetMultipleEffectSpeed => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].effect_speed = output[index + 2];
-                    }
-                }
-                LedSetCommand::SetMultipleEffectOffset => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].effect_offset = output[index + 2];
-                    }
-                }
-                LedSetCommand::SetAllBaseColor => {
-                    for led in leds {
-                        led.base_color = RGB8 {
-                            r: output[2],
-                            g: output[3],
-                            b: output[4],
-                        };
-                    }
-                }
-                LedSetCommand::SetAllEffect => {
-                    for led in leds {
-                        led.effect = LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
-                    }
-                }
-                LedSetCommand::SetAllBrightness => {
-                    for led in leds {
-                        led.brightness = output[2];
-                    }
-                }
-                LedSetCommand::SetAllEffectSpeed => {
-                    for led in leds {
-                        led.effect_speed = output[2];
-                    }
-                }
-                LedSetCommand::SetAllEffectOffset => {
-                    for led in leds {
-                        led.effect_offset = output[2];
-                    }
-                }
-                LedSetCommand::SetAllEffectOffsetSpaced => {
-                    for index in 0..STRIP_LEN {
-                        leds[index].effect_offset = index as u8 * (0xFF / STRIP_LEN as u8)
-                    }
-                }
-                LedSetCommand::Error => {
+                LedCommand::Error => {
                     output[0] = DataCommand::Error as u8;
-                    output[1] = LedSetCommand::Error as u8;
+                    output[1] = LedCommand::Error as u8;
                 }
             }
         }

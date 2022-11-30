@@ -1,37 +1,23 @@
 use core::mem;
 
 use smart_leds::RGB8;
-
-const GAMMA_CORRECTION_TABLE: [u8; 256] = [
-    // Brightness ramp for LEDs
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 5, 6,
-    6, 6, 6, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15,
-    16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 23, 23, 24, 24, 25, 26, 26, 27, 28, 28, 29,
-    30, 30, 31, 32, 32, 33, 34, 35, 36, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-    49, 50, 51, 52, 53, 54, 55, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 74, 75,
-    76, 77, 79, 80, 81, 83, 84, 85, 87, 88, 89, 91, 92, 94, 95, 97, 98, 99, 101, 103, 104, 106,
-    107, 109, 110, 112, 113, 115, 117, 118, 120, 122, 123, 125, 127, 129, 130, 132, 134, 136, 138,
-    139, 141, 143, 145, 147, 149, 151, 153, 155, 157, 159, 161, 163, 165, 167, 169, 171, 173, 175,
-    177, 179, 182, 184, 186, 188, 190, 193, 195, 197, 200, 202, 204, 207, 209, 211, 214, 216, 219,
-    221, 223, 226, 228, 231, 234, 236, 239, 241, 244, 247, 249, 252, 255,
-];
+use packed_struct::prelude::*;
+use strum::EnumCount;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum LedEffect {
     None = 0x00,
     Static = 0x01,
-    BreathingUp = 0x02,
-    BreathingDown = 0x03,
+    Breathing = 0x02,
+    BreathingSpaced = 0x03,
     ColorCycle = 0x04,
+    Rainbow = 0x05,
 }
-
-const LED_EFFECTS: u8 = 9;
 
 impl LedEffect {
     pub fn from_u8(n: u8) -> Option<LedEffect> {
-        if n < LED_EFFECTS {
+        if n < LedEffect::COUNT as u8 {
             Some(unsafe { mem::transmute(n) })
         } else {
             None
@@ -40,30 +26,33 @@ impl LedEffect {
 
     pub fn apply(
         self,
-        time: u32,
-        backlight: &mut RGB8,
-        led: &mut Led,
+        backlight: &mut [RGB8; STRIP_LEN],
+        led_config: &mut LedConfig,
     ) {
         match self {
             LedEffect::None => effect_none(
                 backlight,
-                led,
+                led_config
             ),
             LedEffect::Static => effect_static(
                 backlight,
-                led,
+                led_config
             ),
-            LedEffect::BreathingUp => effect_breathing_up(
+            LedEffect::Breathing => effect_breathing(
                 backlight,
-                led,
+                led_config
             ),
-            LedEffect::BreathingDown => effect_breathing_down(
+            LedEffect::BreathingSpaced => effect_breathing_spaced(
                 backlight,
-                led,
+                led_config
             ),
             LedEffect::ColorCycle => effect_color_cycle(
                 backlight,
-                led,
+                led_config
+            ),
+            LedEffect::Rainbow => effect_rainbow(
+                backlight,
+                led_config
             ),
         };
     }
@@ -72,56 +61,125 @@ impl LedEffect {
 pub const STRIP_LEN: usize = 4;
 
 pub fn effect_none(
-    backlight: &mut RGB8,
-    led: &mut Led,
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
 ) {
-    *backlight = (0, 0, 0).into();
+    *backlight = [RGB8::default(); STRIP_LEN];
 }
 
 pub fn effect_static(
-    backlight: &mut RGB8,
-    led: &mut Led,
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
 ) {
-    *backlight = led.base_color;
+    *backlight = [
+        RGB8 {
+            r: led_config.base_color.r,
+            g: led_config.base_color.g,
+            b: led_config.base_color.b,
+        };
+        STRIP_LEN
+    ];
 }
 
-pub fn effect_breathing_up(
-    backlight: &mut RGB8,
-    led: &mut Led,
+pub fn effect_breathing(
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
 ) {
-    let r = led.base_color.r as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
-    let g = led.base_color.g as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
-    let b = led.base_color.b as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
+    let mut color = led_config.base_color;
 
-    if led.effect_offset == 255 {
-        led.effect = LedEffect::BreathingDown;
-        led.effect_offset = 0;
+    while led_config.timer > 100.0 {
+        led_config.timer -= 100.0;
     }
 
-    *backlight = (r as u8, g as u8, b as u8).into();
+    while led_config.timer < 0.0 {
+        led_config.timer += 100.0;
+    }
+
+    let mut time = led_config.timer;
+
+    if time > 50.0 {
+        time = 100.0 - time;
+    }
+
+    color.r = (color.r as f32 * time / 50.0) as u8;
+    color.g = (color.g as f32 * time / 50.0) as u8;
+    color.b = (color.b as f32 * time / 50.0) as u8;
+
+    *backlight = [
+        RGB8 {
+            r: color.r,
+            g: color.g,
+            b: color.b,
+        };
+        STRIP_LEN
+    ];
 }
 
-pub fn effect_breathing_down(
-    backlight: &mut RGB8,
-    led: &mut Led,
+pub fn effect_breathing_spaced(
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
 ) {
-    let r = led.base_color.r as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
-    let g = led.base_color.g as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
-    let b = led.base_color.b as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
+    let mut color = led_config.base_color;
 
-    if led.effect_offset == 255 {
-        led.effect = LedEffect::BreathingUp;
-        led.effect_offset = 0;
+    while led_config.timer > 100.0 * STRIP_LEN as f32 {
+        led_config.timer -= 100.0 * STRIP_LEN as f32;
     }
 
-    *backlight = (r as u8, g as u8, b as u8).into();
+    while led_config.timer < 0.0 {
+        led_config.timer += 100.0 * STRIP_LEN as f32;
+    }
+
+    for (index, led) in backlight.iter_mut().enumerate() {
+        let mut time = led_config.timer;
+        time -= index as f32 * 100.0;
+
+        if !(0.0..=100.0).contains(&time) {
+            *led = (0, 0, 0).into();
+            continue;
+        }
+
+        if time > 50.0 {
+            time = 100.0 - time;
+        }
+
+        color.r = (color.r as f32 * time / 50.0) as u8;
+        color.g = (color.g as f32 * time / 50.0) as u8;
+        color.b = (color.b as f32 * time / 50.0) as u8;
+
+        *led = color;
+    }
 }
 
 pub fn effect_color_cycle(
-    backlight: &mut RGB8,
-    led: &mut Led,
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
 ) {
-    *backlight = hsv2rgb_u8((led.effect_offset as f32 * 360.0) / 255.0, 1.0, 1.0).into();
+    while led_config.timer > 360.0 {
+        led_config.timer -= 360.0;
+    }
+
+    while led_config.timer < 0.0 {
+        led_config.timer += 360.0;
+    }
+
+    *backlight = [hsv2rgb_u8(led_config.timer, 1.0, 1.0).into(); 4];
+}
+
+pub fn effect_rainbow(
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
+) {
+    while led_config.timer > 360.0 * STRIP_LEN as f32 {
+        led_config.timer -= 360.0  * STRIP_LEN as f32;
+    }
+
+    while led_config.timer < 0.0 {
+        led_config.timer += 360.0 * STRIP_LEN as f32;
+    }
+
+    for (index, led) in backlight.iter_mut().enumerate() {
+        *led = hsv2rgb_u8((led_config.timer + (index as f32 * 360.0 / STRIP_LEN as f32)) % 360.0, 1.0, 1.0).into();
+    }
 }
 
 pub fn hsv2rgb(hue: f32, sat: f32, val: f32) -> (f32, f32, f32) {
@@ -156,35 +214,66 @@ pub fn hsv2rgb_u8(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     )
 }
 
-pub fn rgb_gamma_correct(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
-    (
-        GAMMA_CORRECTION_TABLE[r as usize],
-        GAMMA_CORRECTION_TABLE[g as usize],
-        GAMMA_CORRECTION_TABLE[b as usize],
-    )
-}
-
-pub fn rgb_gamma_correct_rgb8(rgb: RGB8) -> RGB8 {
-    rgb_gamma_correct(rgb.r, rgb.g, rgb.b).into()
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Led {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct LedConfig {
     pub base_color: RGB8,
     pub effect: LedEffect,
     pub brightness: u8,
-    pub effect_speed: u8,
-    pub effect_offset: u8,
+    pub effect_speed: f32,
+    pub effect_offset: f32,
+    timer: f32,
 }
 
-impl Default for Led {
+impl PackedStruct for LedConfig {
+    type ByteArray = [u8; 13];
+
+    fn pack(&self) -> packed_struct::PackingResult<Self::ByteArray> {
+        let mut bytes = [0u8; 13];
+
+        bytes[0] = self.base_color.r;
+        bytes[1] = self.base_color.g;
+        bytes[2] = self.base_color.b;
+        bytes[3] = self.effect as u8;
+        bytes[4] = self.brightness;
+        bytes[5..9].copy_from_slice(&self.effect_speed.to_le_bytes());
+        bytes[9..13].copy_from_slice(&self.effect_offset.to_le_bytes());
+
+        Ok(bytes)
+    }
+
+    fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
+        Ok(LedConfig {
+            base_color: RGB8 {
+                r: src[0],
+                g: src[1],
+                b: src[2],
+            },
+            effect: LedEffect::from_u8(src[3]).unwrap_or(LedEffect::None),
+            brightness: src[4],
+            effect_speed: f32::from_le_bytes([src[5], src[6], src[7], src[8]]),
+            effect_offset: f32::from_le_bytes([src[9], src[10], src[11], src[12]]),
+            timer : 0.0,
+        })
+    }
+}
+
+impl Default for LedConfig {
     fn default() -> Self {
         Self {
             base_color: (0, 0, 0).into(),
             effect: LedEffect::None,
-            brightness: 255,
-            effect_speed: 0,
-            effect_offset: 0,
+            brightness: 0xA0,
+            effect_speed: 1.0,
+            effect_offset: 0.0,
+            timer: 0.0,
         }
+    }
+}
+
+impl LedConfig {
+    pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN]) {
+        self.timer += self.effect_speed;
+
+        self.effect.apply(backlight, self);
     }
 }
