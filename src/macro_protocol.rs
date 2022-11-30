@@ -10,7 +10,8 @@ pub enum MacroCommand {
     CommandPressKey = 0x02,
     CommandReleaseKey = 0x03,
     CommandConsumer = 0x04,
-    CommandLed = 0x05,
+    CommandSetLed = 0x05,
+    CommandClearLed = 0x06,
 }
 
 impl MacroCommand {

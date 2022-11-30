@@ -17,6 +17,7 @@ use crc::{Crc, CRC_32_CKSUM};
 use data_protocol::ConfigElements;
 use data_protocol::LedGetCommand;
 use data_protocol::LedSetCommand;
+
 use hal::timer::CountDown;
 use led_effect::LedEffect;
 use led_effect::STRIP_LEN;
@@ -29,7 +30,6 @@ use core::cell::UnsafeCell;
 use core::convert::Infallible;
 use core::default::Default;
 use core::mem;
-use core::panic;
 
 use arrayvec::ArrayVec;
 
@@ -597,6 +597,7 @@ fn main() -> ! {
 
                 if is_done {
                     current_macro = None;
+                    macro_backlight = None;
 
                     for (_, key) in key_states.iter_mut().enumerate() {
                         if *key == KeyState::Active {
@@ -627,7 +628,7 @@ fn main() -> ! {
                             current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
-                            backlight[i] = (255, 0, 0).into();
+                            macro_backlight = None;
                             break;
                         }
 
@@ -636,7 +637,7 @@ fn main() -> ! {
                             current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
-                            backlight[i] = (0, 255, 0).into();
+                            macro_backlight = None;
                             break;
                         }
 
@@ -645,7 +646,7 @@ fn main() -> ! {
                             current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
-                            backlight[i] = (0, 0, 255).into();
+                            macro_backlight = None;
                             break;
                         }
 
@@ -654,7 +655,7 @@ fn main() -> ! {
                             current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
-                            backlight[i] = (255, 255, 0).into();
+                            macro_backlight = None;
                             break;
                         }
 
@@ -883,7 +884,6 @@ fn read_macro(
     let mut offset = current_offset;
     let mut delay = None;
     let mut is_done = false;
-    *backlight = None;
 
     let macro_data = current_macro.read();
 
@@ -947,13 +947,14 @@ fn read_macro(
 
                 offset += 2;
             }
-            MacroCommand::CommandLed => {
-                // let led_bytes = macro_data[offset + 1..offset + 4].try_into().unwrap();
-                // let led = u16::from_le_bytes(led_bytes);
-                // let color_bytes = macro_data[offset + 4..offset + 7].try_into().unwrap();
-                // let color = RGB8::from_bytes(color_bytes);
-                // backlight[led as usize] = color;
-                // offset += 6;
+            MacroCommand::CommandSetLed => {
+                let color = (macro_data[offset], macro_data[offset + 1], macro_data[offset + 2]).into();
+                *backlight = Some(color);
+
+                offset += 3;
+            }
+            MacroCommand::CommandClearLed => {
+                *backlight = None;
             }
         };
         current_macro =
@@ -967,11 +968,6 @@ fn parse_command(
     data: &GenericInOutMsg,
     config: &mut Config,
     leds: &mut [Led; STRIP_LEN],
-    // led_base_colors: &mut [RGB8; STRIP_LEN],
-    // led_effects: &mut [LedEffect; STRIP_LEN],
-    // led_brightnesses: &mut [u8; STRIP_LEN],
-    // leds[index].effect_speed: &mut [u8; STRIP_LEN],
-    // led_offsets: &mut [u8; STRIP_LEN],
 ) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
