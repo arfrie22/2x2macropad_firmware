@@ -14,14 +14,20 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 use crc::{Crc, CRC_32_CKSUM};
+use data_protocol::LedCommand;
 use hal::timer::CountDown;
+use led_effect::LedEffect;
+use led_effect::STRIP_LEN;
+use macro_protocol::MacroCommand;
 use packed_struct::prelude::*;
+use smart_leds::gamma;
 pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
-
 
 use core::cell::UnsafeCell;
 use core::convert::Infallible;
 use core::default::Default;
+use core::mem;
+use core::panic;
 
 use arrayvec::ArrayVec;
 
@@ -37,7 +43,6 @@ use embedded_hal::digital::v2::*;
 
 use fugit::{ExtU32, MicrosDurationU32};
 use hal::entry;
-
 
 use hal::pac;
 // Pull in any important traits
@@ -68,7 +73,9 @@ use ws2812_pio::Ws2812;
 
 pub mod data_protocol;
 
-const STRIP_LEN: usize = 4;
+pub mod led_effect;
+
+pub mod macro_protocol;
 
 #[repr(C, align(4096))]
 struct FlashBlock {
@@ -128,14 +135,18 @@ impl FlashBlock {
         let checksum = CKSUM.checksum(&data[0..4092]);
         data[4092..].copy_from_slice(&checksum.to_le_bytes());
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-        unsafe { self.write_flash(&data); }
+        unsafe {
+            self.write_flash(&data);
+        }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 
     fn clear_flash(&self) {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         let data = [0u8; 4096];
-        unsafe { self.write_flash(&data); }
+        unsafe {
+            self.write_flash(&data);
+        }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 
@@ -241,12 +252,12 @@ impl KeyMacro {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PackedStruct)]
 #[packed_struct(size_bytes = "4092")]
 struct Config {
-    #[packed_field(endian="lsb")]
+    #[packed_field(endian = "lsb")]
     version: u16,
-    #[packed_field(endian="lsb")]
+    #[packed_field(endian = "lsb")]
     tap_speed: u32,
-    #[packed_field(endian="lsb")]
-    hold_speed: u32
+    #[packed_field(endian = "lsb")]
+    hold_speed: u32,
 }
 
 impl Default for Config {
@@ -271,12 +282,14 @@ fn get_config() -> Config {
         if config.version == PROTOCOL_VERSION {
             return config;
         }
-    } 
-        
+    }
+
     let config = Config::default();
     let mut data = [0; 4096];
     data[0..4092].copy_from_slice(&config.pack().unwrap());
-    unsafe{CONFIG.write_flash(&data);}
+    unsafe {
+        CONFIG.write_flash(&data);
+    }
     CONFIG.set_checksum();
     config
 }
@@ -347,7 +360,7 @@ static MACRO_4: KeyMacro = KeyMacro {
 
 static MACROS: [&KeyMacro; 4] = [&MACRO_1, &MACRO_2, &MACRO_3, &MACRO_4];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum KeyState {
     Idle,
     Intermediate,
@@ -495,8 +508,14 @@ fn main() -> ! {
     );
 
     let mut backlight: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
+    let mut led_base_colors: [RGB8; STRIP_LEN] = [(0, 0, 0).into(); STRIP_LEN];
+    let mut led_effects: [LedEffect; STRIP_LEN] = [LedEffect::None; STRIP_LEN];
+    let mut led_brightnesses = [0u8; STRIP_LEN];
+    let mut led_speeds = [0u8; STRIP_LEN];
+    let mut led_offsets = [0u8; STRIP_LEN];
 
     let strip_brightness = 64u8; // Limit brightness to 64/256
+    let mut time = 0u32;
 
     for (_, led) in backlight.iter_mut().enumerate() {
         *led = (0, 0, 0).into();
@@ -504,7 +523,6 @@ fn main() -> ! {
 
     ws.write(brightness(backlight.iter().copied(), strip_brightness))
         .unwrap();
-
 
     delay.delay_ms(100);
 
@@ -518,18 +536,25 @@ fn main() -> ! {
     }
     psm.frce_off.modify(|_, w| w.proc1().clear_bit());
 
-    
-
     if !CONFIG.validate() {
         CONFIG.initialize_flash();
     }
 
-    
-
     for key in MACROS.iter() {
         for t in MacroType::iter() {
             if !key.validate(&t) {
-                key.initialize_flash(&t);
+                // key.initialize_flash(&t);
+                let mut data = [0u8; 4096];
+                data[0] = MacroCommand::CommandConsumer as u8;
+                data[1..=2].copy_from_slice(&(Consumer::VolumeIncrement as u16).to_le_bytes());
+                data[3] = MacroCommand::CommandDelay as u8;
+                // data[3] = 0xFF;
+                data[5] = 0xFF;
+                // data[5] = 0xFF;
+                // data[6] = 0xFF;
+
+                key.write_flash(&t, &data);
+                key.set_checksum(&t)
             }
         }
     }
@@ -538,30 +563,67 @@ fn main() -> ! {
     let mut config = get_config();
     let mut previous_key_states = [KeyState::Idle; 4];
 
-    let mut current_macro = None; 
+    let mut current_macro = None;
+    let mut current_macro_index = 0;
     let mut current_offset = 0;
+    let mut macro_backlight = None;
+
+    let mut keys = [Keyboard::NoEventIndicated; 256];
+
+    let mut key_change = false;
+    let mut consumer_change = false;
 
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
-        let mut key_states = get_key_states(&matrix, &mut key_timers, &previous_key_states, &config);
+        let mut key_states =
+            get_key_states(&matrix, &mut key_timers, &previous_key_states, &config);
 
-        let mut keys = ArrayVec::<Keyboard, 32>::new();
-        let mut consumers = ArrayVec::<Consumer, 4>::new();
+        let mut consumers = [Consumer::Unassigned; 4];
 
-        if macro_delay.wait().is_ok() {
+        if !key_change && !consumer_change && macro_delay.wait().is_ok() {
             if let Some(c_macro) = current_macro {
-                let mut new_offset = current_offset;
-                let mut delay = None;
-                (new_offset, keys, consumers, delay) = read_macro(current_offset, c_macro, &config, &mut backlight);
+                // let mut new_offset = current_offset;
+                // let mut delay = None;
+                // let mut is_done = false;
+
+                let (new_offset, new_consumers, delay, is_done) = read_macro(
+                    current_offset,
+                    c_macro,
+                    &config,
+                    &mut macro_backlight,
+                    &mut keys,
+                );
+
+                if is_done {
+                    current_macro = None;
+
+                    for (_, key) in key_states.iter_mut().enumerate() {
+                        if *key == KeyState::Active {
+                            *key = KeyState::Done;
+                        }
+                    }
+                }
+
                 current_offset = new_offset;
                 macro_delay.start(delay.unwrap_or(MicrosDurationU32::millis(0)));
 
+                key_change = true;
+
+                consumers = [Consumer::Unassigned; 4];
+
+                for (i, c) in new_consumers.iter().enumerate() {
+                    consumers[i] = *c;
+                }
+
+                if consumers != last_consumer_report.codes {
+                    consumer_change = true;
+                }
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
-                    // match KeyState::Tap {
                         KeyState::Tap => {
                             current_macro = Some(&MACROS[i].tap);
+                            current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
                             backlight[i] = (255, 0, 0).into();
@@ -570,6 +632,7 @@ fn main() -> ! {
 
                         KeyState::Hold => {
                             current_macro = Some(&MACROS[i].hold);
+                            current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
                             backlight[i] = (0, 255, 0).into();
@@ -578,14 +641,16 @@ fn main() -> ! {
 
                         KeyState::TTap => {
                             current_macro = Some(&MACROS[i].ttap);
+                            current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
-                            backlight[i] = (0, 255, 255).into();
+                            backlight[i] = (0, 0, 255).into();
                             break;
                         }
 
                         KeyState::THold => {
                             current_macro = Some(&MACROS[i].thold);
+                            current_macro_index = i;
                             current_offset = 0;
                             key_states[i] = KeyState::Active;
                             backlight[i] = (255, 255, 0).into();
@@ -598,9 +663,8 @@ fn main() -> ! {
             }
         }
 
-
-
-        if keyboard_input_timer.wait().is_ok() && !keys.is_empty() {
+        if key_change && keyboard_input_timer.wait().is_ok() {
+            key_change = false;
             let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
             match keyboard.write_report(&keys) {
                 Err(UsbHidError::WouldBlock) => {}
@@ -612,14 +676,10 @@ fn main() -> ! {
             };
         }
 
-        if consumer_input_timer.wait().is_ok() && !consumers.is_empty() {
-            while !consumers.is_full() {
-                consumers.push(Consumer::Unassigned);
-            }
+        if consumer_change && consumer_input_timer.wait().is_ok() {
+            consumer_change = false;
 
-            let consumer_report = MultipleConsumerReport {
-                codes: consumers.into_inner().unwrap(),
-            };
+            let consumer_report = MultipleConsumerReport { codes: consumers };
 
             if last_consumer_report != consumer_report {
                 let consumer = composite.interface::<ConsumerControlInterface<'_, _>, _>();
@@ -635,7 +695,7 @@ fn main() -> ! {
             }
         }
 
-        if raw_hid_timer.wait().is_ok() && (!raw_hid_queue.is_empty()) {
+        if (!raw_hid_queue.is_empty() && raw_hid_timer.wait().is_ok()) {
             let raw_hid = composite.interface::<GenericInOutInterface<'_, _>, _>();
             let data = raw_hid_queue.pop().unwrap();
             match raw_hid.write_report(&data) {
@@ -682,7 +742,15 @@ fn main() -> ! {
                     core::panic!("Failed to read raw_hid report: {:?}", e)
                 }
                 Ok(data) => {
-                    let data = parse_command(&data, &mut config);
+                    let data = parse_command(
+                        &data,
+                        &mut config,
+                        &mut led_base_colors,
+                        &mut led_effects,
+                        &mut led_brightnesses,
+                        &mut led_speeds,
+                        &mut led_offsets,
+                    );
                     raw_hid_queue.push(data);
                     raw_hid_queue.push(data);
                 }
@@ -690,44 +758,38 @@ fn main() -> ! {
         }
 
         if led_timer.wait().is_ok() {
-            ws.write(brightness(backlight.iter().copied(), strip_brightness))
-                .unwrap();
+            for i in 0..STRIP_LEN {
+                // led_effects[i] = LedEffect::ColorCycle;
+                // led_speeds[i] = i as u8 * 0x10;
+                led_effects[i].apply(
+                    time,
+                    &mut backlight[i],
+                    &mut led_base_colors[i],
+                    &mut led_effects[i],
+                    &mut led_brightnesses[i],
+                    &mut led_speeds[i],
+                    &mut led_offsets[i],
+                );
+                if time % (led_speeds[i] as u32 + 1) == 0 {
+                    led_offsets[i] = led_offsets[i].wrapping_add(1);
+                }
+            }
+
+            if let Some(led) = macro_backlight {
+                backlight[current_macro_index] = led;
+            }
+
+            time = time.wrapping_add(1);
+
+            ws.write(brightness(
+                gamma(backlight.iter().copied()),
+                strip_brightness,
+            ))
+            .unwrap();
         };
 
         previous_key_states = key_states;
     }
-}
-
-pub fn hsv2rgb(hue: f32, sat: f32, val: f32) -> (f32, f32, f32) {
-    let c = val * sat;
-    let v = (hue / 60.0) % 2.0 - 1.0;
-    let v = if v < 0.0 { -v } else { v };
-    let x = c * (1.0 - v);
-    let m = val - c;
-    let (r, g, b) = if hue < 60.0 {
-        (c, x, 0.0)
-    } else if hue < 120.0 {
-        (x, c, 0.0)
-    } else if hue < 180.0 {
-        (0.0, c, x)
-    } else if hue < 240.0 {
-        (0.0, x, c)
-    } else if hue < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-    (r + m, g + m, b + m)
-}
-
-pub fn hsv2rgb_u8(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let r = hsv2rgb(h, s, v);
-
-    (
-        (r.0 * 255.0) as u8,
-        (r.1 * 255.0) as u8,
-        (r.2 * 255.0) as u8,
-    )
 }
 
 fn scan_matrix(
@@ -795,8 +857,12 @@ fn get_key_states(
                 }
             }
 
-            KeyState::Tap | KeyState::Hold | KeyState::TTap | KeyState::THold | KeyState::Active => continue,
-            
+            KeyState::Tap
+            | KeyState::Hold
+            | KeyState::TTap
+            | KeyState::THold
+            | KeyState::Active => continue,
+
             KeyState::Done => {
                 if !keys[i] {
                     key_states[i] = KeyState::Idle;
@@ -808,28 +874,111 @@ fn get_key_states(
     key_states
 }
 
-
 fn read_macro(
     current_offset: usize,
-    m: &FlashBlock,
+    current_macro: &FlashBlock,
     config: &Config,
-    backlight: &mut [RGB8; STRIP_LEN],
-
-) -> (usize, ArrayVec<Keyboard, 32>, ArrayVec<Consumer, 4>, Option<MicrosDurationU32>) {
-    let keys = ArrayVec::<Keyboard, 32>::new();
-    let consumers = ArrayVec::<Consumer, 4>::new();
+    backlight: &mut Option<RGB8>,
+    keys: &mut [Keyboard; 256],
+) -> (
+    usize,
+    ArrayVec<Consumer, 4>,
+    Option<MicrosDurationU32>,
+    bool,
+) {
+    let mut consumers = ArrayVec::<Consumer, 4>::new();
     let mut offset = current_offset;
     let mut delay = None;
+    let mut is_done = false;
+    *backlight = None;
 
-    // for (_, led) in backlight.iter_mut().enumerate() {
-    //     *led = (0, 0, 0).into();
-    // }
+    let macro_data = current_macro.read();
 
+    let mut current_macro =
+        MacroCommand::from_u8(macro_data[offset]).unwrap_or(MacroCommand::CommandTerminator);
+    if current_macro == MacroCommand::CommandTerminator {
+        is_done = true;
+        offset = 0;
+        *keys = [Keyboard::NoEventIndicated; 256];
+    }
 
-    (offset, keys, consumers, delay)
+    while current_macro != MacroCommand::CommandTerminator {
+        *backlight = Some((255, 0, 255).into());
+        offset += 1;
+        match current_macro {
+            MacroCommand::CommandTerminator => {}
+            MacroCommand::CommandDelay => {
+                let delay_bytes = macro_data[offset..offset + 4].try_into().unwrap();
+                delay = Some(MicrosDurationU32::micros(u32::from_le_bytes(delay_bytes)));
+                offset += 4;
+            }
+            MacroCommand::CommandPressKey => {
+                let key = macro_data[offset];
+                if (0x00..=0xA4).contains(&key) || (0xE0..=0xE7).contains(&key) {
+                    keys[key as usize] = unsafe { mem::transmute(key) };
+                }
+
+                offset += 1;
+            }
+            MacroCommand::CommandReleaseKey => {
+                let key = macro_data[offset];
+                keys[key as usize] = Keyboard::NoEventIndicated;
+
+                offset += 1;
+            }
+            MacroCommand::CommandConsumer => {
+                let consumer_value =
+                    u16::from_le_bytes(macro_data[offset..offset + 2].try_into().unwrap());
+
+                if (0x00..=0x06).contains(&consumer_value)
+                    || (0x20..=0x22).contains(&consumer_value)
+                    || (0x30..=0x36).contains(&consumer_value)
+                    || (0x40..=0x48).contains(&consumer_value)
+                    || (0x60..=0x66).contains(&consumer_value)
+                    || (0x80..=0x9E).contains(&consumer_value)
+                    || (0x90..=0x92).contains(&consumer_value)
+                    || (0xA0..=0xA4).contains(&consumer_value)
+                    || (0xB0..=0xCE).contains(&consumer_value)
+                    || (0xE0..=0xEA).contains(&consumer_value)
+                    || (0xF0..=0xF5).contains(&consumer_value)
+                    || (0x100..=0x10D).contains(&consumer_value)
+                    || (0x150..=0x155).contains(&consumer_value)
+                    || (0x160..=0x16A).contains(&consumer_value)
+                    || (0x170..=0x174).contains(&consumer_value)
+                    || (0x180..=0x1BA).contains(&consumer_value)
+                    || (0x1BC..=0x1C7).contains(&consumer_value)
+                    || (0x200..=0x29C).contains(&consumer_value)
+                {
+                    consumers.push(unsafe { mem::transmute(consumer_value) });
+                }
+
+                offset += 2;
+            }
+            MacroCommand::CommandLed => {
+                // let led_bytes = macro_data[offset + 1..offset + 4].try_into().unwrap();
+                // let led = u16::from_le_bytes(led_bytes);
+                // let color_bytes = macro_data[offset + 4..offset + 7].try_into().unwrap();
+                // let color = RGB8::from_bytes(color_bytes);
+                // backlight[led as usize] = color;
+                // offset += 6;
+            }
+        };
+        current_macro =
+            MacroCommand::from_u8(macro_data[offset]).unwrap_or(MacroCommand::CommandTerminator);
+    }
+
+    (offset, consumers, delay, is_done)
 }
 
-fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg {
+fn parse_command(
+    data: &GenericInOutMsg,
+    config: &mut Config,
+    led_base_colors: &mut [RGB8; STRIP_LEN],
+    led_effects: &mut [LedEffect; STRIP_LEN],
+    led_brightnesses: &mut [u8; STRIP_LEN],
+    led_speeds: &mut [u8; STRIP_LEN],
+    led_offsets: &mut [u8; STRIP_LEN],
+) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
 
@@ -931,9 +1080,120 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
         DataCommand::GetLed => {}
 
-        DataCommand::SetLed => {}
+        DataCommand::SetLed => {
+            let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
 
-        DataCommand::GetPortName => {}
+            match led_command {
+                LedCommand::None => {}
+                LedCommand::SetSingleBaseColor => {
+                    let index = output[2] as usize;
+                    if index < STRIP_LEN {
+                        led_base_colors[index] = RGB8 {
+                            r: output[3],
+                            g: output[4],
+                            b: output[5],
+                        };
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                }
+                LedCommand::SetSingleEffect => {
+                    let index = output[2] as usize;
+                    if index < STRIP_LEN {
+                        led_effects[index] =
+                            LedEffect::from_u8(output[3]).unwrap_or(LedEffect::None);
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                }
+                LedCommand::SetSingleBrightness => {
+                    let index = output[2] as usize;
+                    if index < STRIP_LEN {
+                        led_offsets[index] = output[3];
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                }
+                LedCommand::SetSingleEffectSpeed => {
+                    let index = output[2] as usize;
+                    if index < STRIP_LEN {
+                        led_speeds[index] = output[3];
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                }
+                LedCommand::SetSingleEffectOffset => {
+                    let index = output[2] as usize;
+                    if index < STRIP_LEN {
+                        led_offsets[index] = output[3];
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                    }
+                }
+                LedCommand::SetMultipleBaseColor => {
+                    for index in 0..STRIP_LEN {
+                        led_base_colors[index] = RGB8 {
+                            r: output[3 * index + 2],
+                            g: output[3 * index + 3],
+                            b: output[3 * index + 4],
+                        };
+                    }
+                }
+                LedCommand::SetMultipleEffect => {
+                    for index in 0..STRIP_LEN {
+                        led_effects[index] =
+                            LedEffect::from_u8(output[index + 2]).unwrap_or(LedEffect::None);
+                    }
+                }
+                LedCommand::SetMultipleBrightness => {
+                    led_brightnesses[..STRIP_LEN].copy_from_slice(&output[2..STRIP_LEN + 2]);
+                }
+                LedCommand::SetMultipleEffectSpeed => {
+                    led_speeds[..STRIP_LEN].copy_from_slice(&output[2..STRIP_LEN + 2]);
+                }
+                LedCommand::SetMultipleEffectOffset => {
+                    led_offsets[..STRIP_LEN].copy_from_slice(&output[2..STRIP_LEN + 2]);
+                }
+                LedCommand::SetAllBaseColor => {
+                    for led in led_base_colors {
+                        *led = RGB8 {
+                            r: output[2],
+                            g: output[3],
+                            b: output[4],
+                        };
+                    }
+                }
+                LedCommand::SetAllEffect => {
+                    for led in led_effects {
+                        *led = LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
+                    }
+                }
+                LedCommand::SetAllBrightness => {
+                    for led in led_brightnesses {
+                        *led = output[2];
+                    }
+                }
+                LedCommand::SetAllEffectSpeed => {
+                    for led in led_speeds {
+                        *led = output[2];
+                    }
+                }
+                LedCommand::SetAllEffectOffset => {
+                    for led in led_offsets {
+                        *led = output[2];
+                    }
+                }
+                LedCommand::SetAllEffectOffsetSpaced => {
+                    for index in 0..STRIP_LEN {
+                        led_offsets[index] = index as u8 * (0xFF / STRIP_LEN as u8)
+                    }
+                }
+                LedCommand::Error => {
+                    output[0] = DataCommand::Error as u8;
+                    output[1] = LedCommand::Error as u8;
+                }
+            }
+        }
 
         DataCommand::EnterBootloader => {
             reset_to_usb_boot(0, 0);
