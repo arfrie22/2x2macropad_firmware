@@ -543,14 +543,14 @@ fn main() -> ! {
                 data[0] = MacroCommand::CommandConsumer as u8;
                 data[1..=2].copy_from_slice(&(Consumer::VolumeIncrement as u16).to_le_bytes());
                 data[3] = MacroCommand::CommandDelay as u8;
-                data[3] = 0;
+                data[4] = 0;
                 data[5] = 0xFF;
-                data[5] = 0;
                 data[6] = 0;
-                data[7] = MacroCommand::CommandSetLed as u8;
-                data[8] = 0;
-                data[9] = 0xFF;
+                data[7] = 0;
+                data[8] = MacroCommand::CommandSetLed as u8;
+                data[9] = 0;
                 data[10] = 0xFF;
+                data[11] = 0xFF;
 
                 key.write_flash(&t, &data);
                 key.set_checksum(&t)
