@@ -18,7 +18,7 @@ const GAMMA_CORRECTION_TABLE: [u8; 256] = [
 ];
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedEffect {
     None = 0x00,
     Static = 0x01,
@@ -38,55 +38,90 @@ impl LedEffect {
         }
     }
 
-    pub fn apply(self, time: u32, backlight: &mut RGB8, base_color: &mut RGB8, effect: &mut LedEffect, brightness: &mut u8, effect_speed: &mut u8, effect_offset: &mut u8) {
+    pub fn apply(
+        self,
+        time: u32,
+        backlight: &mut RGB8,
+        led: &mut Led,
+    ) {
         match self {
-            LedEffect::None => effect_none(backlight, base_color, effect, brightness, effect_speed, effect_offset),
-            LedEffect::Static => effect_static(backlight, base_color, effect, brightness, effect_speed, effect_offset),
-            LedEffect::BreathingUp => effect_breathing_up(backlight, base_color, effect, brightness, effect_speed, effect_offset),
-            LedEffect::BreathingDown => effect_breathing_down(backlight, base_color, effect, brightness, effect_speed, effect_offset),
-            LedEffect::ColorCycle => effect_color_cycle(backlight, base_color, effect, brightness, effect_speed, effect_offset),
+            LedEffect::None => effect_none(
+                backlight,
+                led,
+            ),
+            LedEffect::Static => effect_static(
+                backlight,
+                led,
+            ),
+            LedEffect::BreathingUp => effect_breathing_up(
+                backlight,
+                led,
+            ),
+            LedEffect::BreathingDown => effect_breathing_down(
+                backlight,
+                led,
+            ),
+            LedEffect::ColorCycle => effect_color_cycle(
+                backlight,
+                led,
+            ),
         };
     }
 }
 
 pub const STRIP_LEN: usize = 4;
 
-pub fn effect_none(backlight: &mut RGB8, _base_color: &mut RGB8, _effect: &mut LedEffect, _brightness: &mut u8, _effect_speed: &mut u8, _effect_offset: &mut u8) {
+pub fn effect_none(
+    backlight: &mut RGB8,
+    led: &mut Led,
+) {
     *backlight = (0, 0, 0).into();
 }
 
-pub fn effect_static(backlight: &mut RGB8, base_color: &mut RGB8, _effect: &mut LedEffect, _brightness: &mut u8, _effect_speed: &mut u8, _effect_offset: &mut u8) {
-    *backlight = *base_color;
+pub fn effect_static(
+    backlight: &mut RGB8,
+    led: &mut Led,
+) {
+    *backlight = led.base_color;
 }
 
-pub fn effect_breathing_up(backlight: &mut RGB8, base_color: &mut RGB8, effect: &mut LedEffect, _brightness: &mut u8, _effect_speed: &mut u8, effect_offset: &mut u8) {
-    let r = base_color.r as f32 / 255.0 * (*effect_offset as f32 / 255.0) * 255.0;
-    let g = base_color.g as f32 / 255.0 * (*effect_offset as f32 / 255.0) * 255.0;
-    let b = base_color.b as f32 / 255.0 * (*effect_offset as f32 / 255.0) * 255.0;
+pub fn effect_breathing_up(
+    backlight: &mut RGB8,
+    led: &mut Led,
+) {
+    let r = led.base_color.r as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
+    let g = led.base_color.g as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
+    let b = led.base_color.b as f32 / 255.0 * (led.effect_offset as f32 / 255.0) * 255.0;
 
-    if *effect_offset == 255 {
-        *effect = LedEffect::BreathingDown;
-        *effect_offset = 0;
+    if led.effect_offset == 255 {
+        led.effect = LedEffect::BreathingDown;
+        led.effect_offset = 0;
     }
 
     *backlight = (r as u8, g as u8, b as u8).into();
 }
 
-pub fn effect_breathing_down(backlight: &mut RGB8, base_color: &mut RGB8, effect: &mut LedEffect, _brightness: &mut u8, _effect_speed: &mut u8, effect_offset: &mut u8) {
-    let r = base_color.r as f32 / 255.0 * (1.0 - (*effect_offset as f32 / 255.0)) * 255.0;
-    let g = base_color.g as f32 / 255.0 * (1.0 - (*effect_offset as f32 / 255.0)) * 255.0;
-    let b = base_color.b as f32 / 255.0 * (1.0 - (*effect_offset as f32 / 255.0)) * 255.0;
+pub fn effect_breathing_down(
+    backlight: &mut RGB8,
+    led: &mut Led,
+) {
+    let r = led.base_color.r as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
+    let g = led.base_color.g as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
+    let b = led.base_color.b as f32 / 255.0 * (1.0 - (led.effect_offset as f32 / 255.0)) * 255.0;
 
-    if *effect_offset == 255 {
-        *effect = LedEffect::BreathingUp;
-        *effect_offset = 0;
+    if led.effect_offset == 255 {
+        led.effect = LedEffect::BreathingUp;
+        led.effect_offset = 0;
     }
 
     *backlight = (r as u8, g as u8, b as u8).into();
 }
 
-pub fn effect_color_cycle(backlight: &mut RGB8, _base_color: &mut RGB8, _effect: &mut LedEffect, _brightness: &mut u8, _effect_speed: &mut u8, effect_offset: &mut u8) {
-    *backlight = hsv2rgb_u8((*effect_offset as f32 * 360.0) / 255.0, 1.0, 1.0).into();
+pub fn effect_color_cycle(
+    backlight: &mut RGB8,
+    led: &mut Led,
+) {
+    *backlight = hsv2rgb_u8((led.effect_offset as f32 * 360.0) / 255.0, 1.0, 1.0).into();
 }
 
 pub fn hsv2rgb(hue: f32, sat: f32, val: f32) -> (f32, f32, f32) {
@@ -131,4 +166,25 @@ pub fn rgb_gamma_correct(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 
 pub fn rgb_gamma_correct_rgb8(rgb: RGB8) -> RGB8 {
     rgb_gamma_correct(rgb.r, rgb.g, rgb.b).into()
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Led {
+    pub base_color: RGB8,
+    pub effect: LedEffect,
+    pub brightness: u8,
+    pub effect_speed: u8,
+    pub effect_offset: u8,
+}
+
+impl Default for Led {
+    fn default() -> Self {
+        Self {
+            base_color: (0, 0, 0).into(),
+            effect: LedEffect::None,
+            brightness: 255,
+            effect_speed: 0,
+            effect_offset: 0,
+        }
+    }
 }
