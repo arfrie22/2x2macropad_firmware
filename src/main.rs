@@ -15,6 +15,7 @@ const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 use crc::{Crc, CRC_32_CKSUM};
 use data_protocol::ConfigElements;
+use data_protocol::KeyConfigElements;
 use data_protocol::LedCommand;
 
 use hal::timer::CountDown;
@@ -50,6 +51,7 @@ use hal::pac;
 // Pull in any important traits
 use hal::prelude::*;
 use panic_probe as _;
+
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usbd_human_interface_device::device::consumer::{
@@ -252,6 +254,21 @@ impl KeyMacro {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PackedStruct)]
+#[packed_struct(size_bytes = "1")]
+struct KeyConfig {
+    #[packed_field(endian = "lsb")]
+    single_tap_mode: bool,
+}
+
+impl Default for KeyConfig {
+    fn default() -> Self {
+        Self { 
+            single_tap_mode: false
+         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PackedStruct)]
 #[packed_struct(size_bytes = "4092")]
 struct Config {
     #[packed_field(endian = "lsb")]
@@ -262,6 +279,11 @@ struct Config {
     hold_speed: u32,
     #[packed_field(endian = "lsb")]
     default_delay: u32,
+
+
+    //...
+    #[packed_field(element_size_bytes = "1")]
+    key_configs: [KeyConfig; 4],
     #[packed_field(element_size_bytes = "13")]
     led_config: LedConfig,
 }
@@ -282,8 +304,9 @@ impl Default for Config {
         Self {
             version: PROTOCOL_VERSION,
             tap_speed: MicrosDurationU32::millis(200).to_micros(),
-            hold_speed: MicrosDurationU32::millis(500).to_micros(),
+            hold_speed: MicrosDurationU32::millis(200).to_micros(),
             default_delay: MicrosDurationU32::millis(100).to_micros(),
+            key_configs: [KeyConfig::default(); 4],
             led_config: LedConfig::default(),
         }
     }
@@ -538,22 +561,39 @@ fn main() -> ! {
     for key in MACROS.iter() {
         for t in MacroType::iter() {
             if !key.validate(&t) {
-                // key.initialize_flash(&t);
+                key.initialize_flash(&t);
                 let mut data = [0u8; 4096];
-                data[0] = MacroCommand::CommandConsumer as u8;
-                data[1..=2].copy_from_slice(&(Consumer::VolumeIncrement as u16).to_le_bytes());
-                data[3] = MacroCommand::CommandDelay as u8;
-                data[4] = 0;
-                data[5] = 0xFF;
-                data[6] = 0;
-                data[7] = 0;
-                data[8] = MacroCommand::CommandSetLed as u8;
-                data[9] = 0;
-                data[10] = 0xFF;
-                data[11] = 0xFF;
+                data[0] = MacroCommand::CommandSetLed as u8;
+                match t {
+                    MacroType::Tap => {
+                        data[1] = 0x00;
+                        data[2] = 0xFF;
+                        data[3] = 0xFF;
+                    },
+                    MacroType::Hold => {
+                        data[1] = 0xFF;
+                        data[2] = 0x00;
+                        data[3] = 0xFF;
+                    },
+                    MacroType::DoubleTap => {
+                        data[1] = 0xFF;
+                        data[2] = 0xFF;
+                        data[3] = 0x00;
+                    },
+                    MacroType::TapHold => {
+                        data[1] = 0xFF;
+                        data[2] = 0x00;
+                        data[3] = 0x00;
+                    },
+                }
+                data[4] = MacroCommand::CommandPressKey as u8;
+                data[5] = Keyboard::F as u8;
+                data[6] = MacroCommand::CommandTerminator as u8;
+                data[7] = MacroCommand::CommandReleaseKey as u8;
+                data[8] = Keyboard::F as u8;
 
                 key.write_flash(&t, &data);
-                key.set_checksum(&t)
+                key.set_checksum(&t);
             }
         }
     }
@@ -704,7 +744,7 @@ fn main() -> ! {
             }
         }
 
-        if (!raw_hid_queue.is_empty() && raw_hid_timer.wait().is_ok()) {
+        if !raw_hid_queue.is_empty() && raw_hid_timer.wait().is_ok() {
             let raw_hid = composite.interface::<GenericInOutInterface<'_, _>, _>();
             let data = raw_hid_queue.pop().unwrap();
             match raw_hid.write_report(&data) {
@@ -759,6 +799,11 @@ fn main() -> ! {
                     raw_hid_queue.push(data);
                 }
             }
+
+            if raw_hid.read_report().is_ok() {
+                // TODO: Remove test panic
+                core::panic!("Should not be able to read more than one report at a time");
+            }
         }
 
         if led_timer.wait().is_ok() {
@@ -793,7 +838,11 @@ fn scan_matrix(
         delay.delay_ms(1);
 
         for j in 0..KEY_ROWS {
-            keys[(KEY_ROWS * i) + j] = row_pins[j].is_high().unwrap_or(false);
+            keys[if i % 2 == 0 {
+                (KEY_ROWS * i) + j
+            } else {
+                (KEY_ROWS * i) + KEY_ROWS - j - 1
+            }] = row_pins[j].is_high().unwrap_or(false);
         }
 
         col_pins[i].set_low().ok();
@@ -823,6 +872,8 @@ fn get_key_states(
                     if key_timers[i].wait().is_ok() {
                         key_states[i] = KeyState::Hold;
                     }
+                } else if config.key_configs[i].single_tap_mode {
+                    key_states[i] = KeyState::Tap;
                 } else {
                     key_states[i] = KeyState::TapIntermediate;
                     key_timers[i].start(MicrosDurationU32::micros(config.tap_speed));
@@ -894,7 +945,9 @@ fn read_macro(
     while current_macro != MacroCommand::CommandTerminator {
         offset += 1;
         match current_macro {
-            MacroCommand::CommandTerminator => {}
+            MacroCommand::CommandTerminator => {
+                break;
+            }
             MacroCommand::CommandDelay => {
                 let delay_bytes = macro_data[offset..offset + 4].try_into().unwrap();
                 delay = Some(MicrosDurationU32::micros(u32::from_le_bytes(delay_bytes)));
@@ -955,6 +1008,8 @@ fn read_macro(
         current_macro =
             MacroCommand::from_u8(macro_data[offset]).unwrap_or(MacroCommand::CommandTerminator);
     }
+
+    offset += 1;
 
     (offset, consumers, delay, is_done)
 }
@@ -1220,6 +1275,49 @@ fn parse_command(
                     output[0] = DataCommand::Error as u8;
                     output[1] = LedCommand::Error as u8;
                 }
+            }
+        }
+
+        DataCommand::ReadKeyConfig => {
+            let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+
+            match key_config_command {
+                KeyConfigElements::SingleTapMode => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        output[3] = config.key_configs[index].single_tap_mode as u8;
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::Error => {
+                    output[0] = DataCommand::Error as u8;
+                    output[1] = KeyConfigElements::Error as u8;
+                },
+            }
+        }
+
+        DataCommand::WriteKeyConfig => {
+            let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+
+            match key_config_command {
+                KeyConfigElements::SingleTapMode => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        config.key_configs[index].single_tap_mode = output[3] != 0;
+                        config.write();
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::Error => {
+                    output[0] = DataCommand::Error as u8;
+                    output[1] = KeyConfigElements::Error as u8;
+                },
             }
         }
 

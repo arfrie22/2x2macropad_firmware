@@ -16,6 +16,8 @@ pub enum DataCommand {
     WriteConfig = 0x06,
     GetLed = 0x07,
     SetLed = 0x08,
+    ReadKeyConfig = 0x09,
+    WriteKeyConfig = 0x0A,
 
 
     // Extra commands not included in the count
@@ -48,6 +50,25 @@ pub enum ConfigElements {
 impl ConfigElements {
     pub fn from_u8(n: u8) -> Option<ConfigElements> {
         if n < ConfigElements::COUNT as u8 - 1 || n == 0xFF {
+            Some(unsafe { mem::transmute(n) })
+        } else {
+            None
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
+pub enum KeyConfigElements {
+    SingleTapMode = 0x00,
+
+    //...
+    Error = 0xFF
+}
+
+impl KeyConfigElements {
+    pub fn from_u8(n: u8) -> Option<KeyConfigElements> {
+        if n < KeyConfigElements::COUNT as u8 - 1 || n == 0xFF {
             Some(unsafe { mem::transmute(n) })
         } else {
             None
