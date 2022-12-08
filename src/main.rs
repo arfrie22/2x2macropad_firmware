@@ -611,7 +611,6 @@ fn main() -> ! {
 
     // delay.delay_ms(100);
 
-    let mut raw_hid_queue = ArrayVec::<GenericInOutMsg, 32>::new();
     let mut previous_key_states = [KeyState::Idle; 4];
 
     let mut current_macro = None;
@@ -623,6 +622,8 @@ fn main() -> ! {
 
     let mut key_change = false;
     let mut consumer_change = false;
+
+    
 
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
@@ -744,21 +745,6 @@ fn main() -> ! {
             }
         }
 
-        if !raw_hid_queue.is_empty() && raw_hid_timer.wait().is_ok() {
-            let raw_hid = composite.interface::<GenericInOutInterface<'_, _>, _>();
-            let data = raw_hid_queue.pop().unwrap();
-            match raw_hid.write_report(&data) {
-                Err(UsbHidError::WouldBlock) => {
-                    raw_hid_queue.insert(0, data);
-                }
-                Err(UsbHidError::Duplicate) => {}
-                Ok(_) => {}
-                Err(e) => {
-                    core::panic!("Failed to write raw hid report: {:?}", e)
-                }
-            };
-        }
-
         //Tick once per ms
         if tick_timer.wait().is_ok() {
             //Process any managed functionality
@@ -795,14 +781,16 @@ fn main() -> ! {
                         &data,
                         &mut config,
                     );
-                    raw_hid_queue.push(data);
-                    raw_hid_queue.push(data);
-                }
-            }
 
-            if raw_hid.read_report().is_ok() {
-                // TODO: Remove test panic
-                core::panic!("Should not be able to read more than one report at a time");
+                    match raw_hid.write_report(&data) {
+                        Err(UsbHidError::WouldBlock) => {}
+                        Err(UsbHidError::Duplicate) => {}
+                        Ok(_) => {}
+                        Err(e) => {
+                            core::panic!("Failed to write raw hid report: {:?}", e)
+                        }
+                    };
+                }
             }
         }
 

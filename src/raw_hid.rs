@@ -3,7 +3,6 @@ use usbd_human_interface_device::hid_class::descriptor::HidProtocol;
 use core::default::Default;
 use delegate::delegate;
 use embedded_time::duration::Milliseconds;
-use log::error;
 use packed_struct::prelude::*;
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus};
 use usb_device::class_prelude::DescriptorWriter;
@@ -21,23 +20,21 @@ use usbd_human_interface_device::UsbHidError;
 /// Interface Devices (Hid) Version 1.11](<https://www.usb.org/sites/default/files/hid1_11.pdf>)
 #[rustfmt::skip]
 pub const GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01,       // Usage Page (Vender),
-    0x09, 0x02,       // Usage (0x02),
+    0x06, 0x00, 0xFF, // Usage Page (Vender),
+    0x09, 0x01,       // Usage (Generic In/Out),
     0xA1, 0x01,       // Collection (Application),
-    // Input
-    0x09, 0x02,       //   Usage (0x02),
-    0x15, 0x00,       //   Logical Minimum (0),
-    0x26, 0xFF, 0x00, //   Logical Maximum (255),
-    0x75, 0x08,       //   Report Size (8),
-    0x95, 0x40,       //   Report Count (64),
-    0x81, 0x02,       //   Input (Data, Variable, Absolute),
-    //Output
-    0x09, 0x03,       //   Usage (0x03),
-    0x15, 0x00,       //   Logical Minimum (0),
-    0x26, 0xFF, 0x00, //   Logical Maximum (255),
-    0x75, 0x08,       //   Report Size (8),
-    0x95, 0x40,       //   Report Count (64),
-    0x81, 0x02,       //   Input (Data, Variable, Absolute),
+    0x09, 0x02,       //   Usage (Input),
+    0x15, 0x00,       //     Logical Minimum (0),
+    0x26, 0xFF, 0x00, //     Logical Maximum (255),
+    0x75, 0x08,       //     Report Size (8),
+    0x95, 0x40,       //     Report Count (64),
+    0x81, 0x02,       //     Input (Data, Variable, Absolute),
+    0x09, 0x03,       //   Usage (Output),
+    0x15, 0x00,       //     Logical Minimum (0),
+    0x26, 0xFF, 0x00, //     Logical Maximum (255),
+    0x75, 0x08,       //     Report Size (8),
+    0x95, 0x40,       //     Report Count (64),
+    0x91, 0x02,       //     Output (Data, Variable, Absolute),
     0xC0,             // End Collection
 ];
 
@@ -80,9 +77,9 @@ impl<'a, B: UsbBus> GenericInOutInterface<'a, B> {
         WrappedInterfaceConfig::new(
             RawInterfaceBuilder::new(GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR)
                 .description("GenericInOut")
-                .in_endpoint(UsbPacketSize::Bytes64, Milliseconds(10))
+                .in_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))
                 .unwrap()
-                .with_out_endpoint(UsbPacketSize::Bytes64, Milliseconds(10))
+                .with_out_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))
                 .unwrap()
                 .build(),
             (),
