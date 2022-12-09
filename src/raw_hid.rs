@@ -76,7 +76,7 @@ impl<'a, B: UsbBus> GenericInOutInterface<'a, B> {
     pub fn default_config() -> WrappedInterfaceConfig<Self, RawInterfaceConfig<'a>> {
         WrappedInterfaceConfig::new(
             RawInterfaceBuilder::new(GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR)
-                .description("GenericInOut")
+                .description("Raw HID")
                 .in_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))
                 .unwrap()
                 .with_out_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))

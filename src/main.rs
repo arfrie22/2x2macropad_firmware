@@ -16,8 +16,10 @@ const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 use crc::{Crc, CRC_32_CKSUM};
 use data_protocol::ConfigElements;
 use data_protocol::KeyConfigElements;
+use data_protocol::KeyMode;
 use data_protocol::LedCommand;
 
+use embedded_time::duration::Milliseconds;
 use hal::timer::CountDown;
 use led_effect::LedConfig;
 use led_effect::LedEffect;
@@ -253,17 +255,47 @@ impl KeyMacro {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, PackedStruct)]
-#[packed_struct(size_bytes = "1")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct KeyConfig {
-    #[packed_field(endian = "lsb")]
-    single_tap_mode: bool,
+    key_mode: KeyMode,
+    key_data: u16,
+    key_color: RGB8,
+}
+
+impl PackedStruct for KeyConfig {
+    type ByteArray = [u8; 6];
+
+    fn pack(&self) -> packed_struct::PackingResult<Self::ByteArray> {
+        let mut bytes = [0u8; 6];
+
+        bytes[0] = self.key_mode as u8;
+        bytes[1..3].copy_from_slice(&self.key_data.to_le_bytes());
+        bytes[3] = self.key_color.r;
+        bytes[4] = self.key_color.g;
+        bytes[5] = self.key_color.b;
+
+        Ok(bytes)
+    }
+
+    fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
+        Ok(KeyConfig {
+            key_mode: KeyMode::from_u8(src[0]).unwrap_or(KeyMode::Default),
+            key_data: u16::from_le_bytes([src[1], src[2]]),
+            key_color: RGB8 {
+                r: src[3],
+                g: src[4],
+                b: src[5],
+            },
+        })
+    }
 }
 
 impl Default for KeyConfig {
     fn default() -> Self {
         Self { 
-            single_tap_mode: false
+            key_mode: KeyMode::Default,
+            key_data: 0,
+            key_color: RGB8::default(),
          }
     }
 }
@@ -282,7 +314,7 @@ struct Config {
 
 
     //...
-    #[packed_field(element_size_bytes = "1")]
+    #[packed_field(element_size_bytes = "6")]
     key_configs: [KeyConfig; 4],
     #[packed_field(element_size_bytes = "13")]
     led_config: LedConfig,
@@ -414,8 +446,8 @@ enum KeyState {
 const MACRO_LENGTH: u16 = 4096 - 2;
 
 const KEYBOARD_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
-const CONSUMER_POLL: MicrosDurationU32 = MicrosDurationU32::millis(50);
-const RAW_HID_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
+const CONSUMER_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
+const RAW_HID_POLL: MicrosDurationU32 = MicrosDurationU32::millis(5);
 const LED_POLL: MicrosDurationU32 = MicrosDurationU32::millis(16);
 
 const KEY_COLS: usize = 2;
@@ -468,13 +500,21 @@ fn main() -> ! {
 
     let mut composite = UsbHidClassBuilder::new()
         .add_interface(
-            raw_hid::GenericInOutInterface::default_config(),
+            {
+                let mut cfg = raw_hid::GenericInOutInterface::default_config();
+                cfg.inner_config.description = Some("HID Data Control Interface");
+                cfg
+            },
         )
         .add_interface(
             usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface::default_config(),
         )
         .add_interface(
-            usbd_human_interface_device::device::consumer::ConsumerControlInterface::default_config(),
+            {
+                let mut cfg = usbd_human_interface_device::device::consumer::ConsumerControlInterface::default_config();
+                cfg.inner_config.in_endpoint.poll_interval = CONSUMER_POLL.to_millis() as u8;
+                cfg
+            },
         )
         //Build
         .build(usb_alloc);
@@ -618,7 +658,7 @@ fn main() -> ! {
     let mut current_offset = 0;
     let mut macro_backlight = None;
 
-    let mut keys = [Keyboard::NoEventIndicated; 256];
+    let mut keys = [Keyboard::NoEventIndicated; 260];
 
     let mut key_change = false;
     let mut consumer_change = false;
@@ -635,12 +675,13 @@ fn main() -> ! {
         if !key_change && !consumer_change && macro_delay.wait().is_ok() {
             if let Some(c_macro) = current_macro {
 
-                let (new_offset, new_consumers, delay, is_done) = read_macro(
+                let (new_offset, delay, is_done) = read_macro(
                     current_offset,
                     c_macro,
                     &config,
                     &mut macro_backlight,
                     &mut keys,
+                    &mut consumers[current_macro_index],
                 );
 
                 if is_done {
@@ -658,12 +699,7 @@ fn main() -> ! {
                 macro_delay.start(delay.unwrap_or_else( || MicrosDurationU32::micros(config.default_delay)));
 
                 key_change = true;
-
                 consumers = [Consumer::Unassigned; 4];
-
-                for (i, c) in new_consumers.iter().enumerate() {
-                    consumers[i] = *c;
-                }
 
                 if consumers != last_consumer_report.codes {
                     consumer_change = true;
@@ -729,21 +765,75 @@ fn main() -> ! {
             }
         }
 
-        if key_change && keyboard_input_timer.wait().is_ok() {
-            key_change = false;
+        if keyboard_input_timer.wait().is_ok() {
+            
+            for (i, key) in matrix.iter().enumerate() {
+                if config.key_configs[i].key_mode == KeyMode::KeyMode {
+                    if *key {
+                        let key_value = (config.key_configs[i].key_data & 0xFF) as u8;
+                        if (0x00..=0xA4).contains(&key_value) || (0xE0..=0xE7).contains(&key_value) {
+                            keys[259 - i] = unsafe { mem::transmute(key_value) };
+                        } else {
+                            keys[259 - i] = Keyboard::NoEventIndicated;
+                        }
+                    }
+                    else {
+                        keys[259 - i] = Keyboard::NoEventIndicated;
+                    }
+                }
+            }
+
             let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
             match keyboard.write_report(&keys) {
                 Err(UsbHidError::WouldBlock) => {}
-                Err(UsbHidError::Duplicate) => {}
-                Ok(_) => {}
+                Err(UsbHidError::Duplicate) => {
+                    key_change = false;
+                }
+                Ok(_) => {
+                    key_change = false;
+                }
                 Err(e) => {
                     core::panic!("Failed to write keyboard report: {:?}", e)
                 }
             };
+
+            info!("Wrote keyboard report, keychange: {}", key_change);
         }
 
-        if consumer_change && consumer_input_timer.wait().is_ok() {
-            consumer_change = false;
+        if consumer_input_timer.wait().is_ok() {
+
+            for (i, key) in matrix.iter().enumerate() {
+                if config.key_configs[i].key_mode == KeyMode::ConsumerMode {
+                    if *key {
+                        let consumer_value = config.key_configs[i].key_data;
+                        if (0x00..=0x06).contains(&consumer_value)
+                            || (0x20..=0x22).contains(&consumer_value)
+                            || (0x30..=0x36).contains(&consumer_value)
+                            || (0x40..=0x48).contains(&consumer_value)
+                            || (0x60..=0x66).contains(&consumer_value)
+                            || (0x80..=0x9E).contains(&consumer_value)
+                            || (0x90..=0x92).contains(&consumer_value)
+                            || (0xA0..=0xA4).contains(&consumer_value)
+                            || (0xB0..=0xCE).contains(&consumer_value)
+                            || (0xE0..=0xEA).contains(&consumer_value)
+                            || (0xF0..=0xF5).contains(&consumer_value)
+                            || (0x100..=0x10D).contains(&consumer_value)
+                            || (0x150..=0x155).contains(&consumer_value)
+                            || (0x160..=0x16A).contains(&consumer_value)
+                            || (0x170..=0x174).contains(&consumer_value)
+                            || (0x180..=0x1BA).contains(&consumer_value)
+                            || (0x1BC..=0x1C7).contains(&consumer_value)
+                            || (0x200..=0x29C).contains(&consumer_value)
+                        {
+                            consumers[i] = unsafe { mem::transmute(consumer_value) };
+                        } else {
+                            consumers[i] = Consumer::Unassigned;
+                        }
+                    } else {
+                        consumers[i] = Consumer::Unassigned;
+                    }
+                }
+            }
 
             let consumer_report = MultipleConsumerReport { codes: consumers };
 
@@ -752,6 +842,7 @@ fn main() -> ! {
                 match consumer.write_report(&consumer_report) {
                     Err(UsbError::WouldBlock) => {}
                     Ok(_) => {
+                        consumer_change = false;
                         last_consumer_report = consumer_report;
                     }
                     Err(e) => {
@@ -817,6 +908,12 @@ fn main() -> ! {
                 backlight[current_macro_index] = led;
             }
 
+            for (i, key) in matrix.iter().enumerate() {
+                if *key && (config.key_configs[i].key_mode == KeyMode::KeyMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode) {
+                    backlight[i] = config.key_configs[i].key_color;
+                }
+            }
+
             time = time.wrapping_add(1);
 
             ws.write(brightness(
@@ -864,6 +961,9 @@ fn get_key_states(
     let mut key_states = *previous_key_state;
 
     for i in 0..KEY_COUNT {
+        if config.key_configs[i].key_mode == KeyMode::KeyMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode {
+            key_states[i] = KeyState::Idle;
+        }
         match previous_key_state[i] {
             KeyState::Idle => {
                 if keys[i] {
@@ -876,7 +976,7 @@ fn get_key_states(
                     if key_timers[i].wait().is_ok() {
                         key_states[i] = KeyState::Hold;
                     }
-                } else if config.key_configs[i].single_tap_mode {
+                } else if config.key_configs[i].key_mode == KeyMode::SingleTapMode {
                     key_states[i] = KeyState::Tap;
                 } else {
                     key_states[i] = KeyState::TapIntermediate;
@@ -923,10 +1023,11 @@ fn read_macro(
     current_macro: &FlashBlock,
     config: &Config,
     backlight: &mut Option<RGB8>,
-    keys: &mut [Keyboard; 256],
+    keys: &mut [Keyboard; 260],
+    consumer: &mut Consumer,
+
 ) -> (
     usize,
-    ArrayVec<Consumer, 4>,
     Option<MicrosDurationU32>,
     bool,
 ) {
@@ -942,7 +1043,7 @@ fn read_macro(
     if current_macro == MacroCommand::CommandTerminator {
         is_done = true;
         offset = 0;
-        *keys = [Keyboard::NoEventIndicated; 256];
+        *keys = [Keyboard::NoEventIndicated; 260];
         *backlight = None;
     }
 
@@ -994,7 +1095,7 @@ fn read_macro(
                     || (0x1BC..=0x1C7).contains(&consumer_value)
                     || (0x200..=0x29C).contains(&consumer_value)
                 {
-                    consumers.push(unsafe { mem::transmute(consumer_value) });
+                    *consumer = unsafe { mem::transmute(consumer_value) };
                 }
 
                 offset += 2;
@@ -1015,7 +1116,7 @@ fn read_macro(
 
     offset += 1;
 
-    (offset, consumers, delay, is_done)
+    (offset, delay, is_done)
 }
 
 fn parse_command(
@@ -1307,10 +1408,34 @@ fn parse_command(
             let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
 
             match key_config_command {
-                KeyConfigElements::SingleTapMode => {
+                KeyConfigElements::KeyMode => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
-                        output[3] = config.key_configs[index].single_tap_mode as u8;
+                        output[3] = config.key_configs[index].key_mode as u8;
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::KeyData => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        let key_data = config.key_configs[index].key_data;
+                        output[3..5].copy_from_slice(&key_data.to_le_bytes());
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::KeyColor => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        let color = config.key_configs[index].key_color;
+                        output[3] = color.r;
+                        output[4] = color.g;
+                        output[5] = color.b;
                     } else {
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
@@ -1328,10 +1453,38 @@ fn parse_command(
             let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
 
             match key_config_command {
-                KeyConfigElements::SingleTapMode => {
+                KeyConfigElements::KeyMode => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
-                        config.key_configs[index].single_tap_mode = output[3] != 0;
+                        config.key_configs[index].key_mode =
+                            KeyMode::from_u8(output[3]).unwrap_or(KeyMode::Default);
+                        config.write();
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::KeyData => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        config.key_configs[index].key_data =
+                            u16::from_be_bytes(output[3..5].try_into().unwrap());
+                        config.write();
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::KeyColor => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        config.key_configs[index].key_color = RGB8 {
+                            r: output[3],
+                            g: output[4],
+                            b: output[5],
+                        };
                         config.write();
                     } else {
                         output[0] = DataCommand::Error as u8;

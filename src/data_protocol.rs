@@ -1,5 +1,6 @@
 use core::mem;
 
+use packed_struct::prelude::PrimitiveEnum_u8;
 use strum::EnumCount;
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -61,7 +62,9 @@ impl ConfigElements {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum KeyConfigElements {
-    SingleTapMode = 0x00,
+    KeyMode = 0x00,
+    KeyData = 0x01,
+    KeyColor = 0x02,
 
     //...
     Error = 0xFF
@@ -70,6 +73,25 @@ pub enum KeyConfigElements {
 impl KeyConfigElements {
     pub fn from_u8(n: u8) -> Option<KeyConfigElements> {
         if n < KeyConfigElements::COUNT as u8 - 1 || n == 0xFF {
+            Some(unsafe { mem::transmute(n) })
+        } else {
+            None
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(PrimitiveEnum_u8, Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
+pub enum KeyMode {
+    Default = 0x00,
+    SingleTapMode = 0x01,
+    KeyMode = 0x02,
+    ConsumerMode = 0x03,
+}
+
+impl KeyMode {
+    pub fn from_u8(n: u8) -> Option<KeyMode> {
+        if n < KeyMode::COUNT as u8 {
             Some(unsafe { mem::transmute(n) })
         } else {
             None
