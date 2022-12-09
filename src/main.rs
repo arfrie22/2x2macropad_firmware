@@ -672,6 +672,10 @@ fn main() -> ! {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
                         KeyState::Tap => {
+                            if !MACROS[i].validate(&MacroType::Tap) {
+                                continue;
+                            }
+
                             current_macro = Some(&MACROS[i].tap);
                             current_macro_index = i;
                             current_offset = 0;
@@ -681,6 +685,10 @@ fn main() -> ! {
                         }
 
                         KeyState::Hold => {
+                            if !MACROS[i].validate(&MacroType::Hold) {
+                                continue;
+                            }
+
                             current_macro = Some(&MACROS[i].hold);
                             current_macro_index = i;
                             current_offset = 0;
@@ -690,6 +698,10 @@ fn main() -> ! {
                         }
 
                         KeyState::TTap => {
+                            if !MACROS[i].validate(&MacroType::DoubleTap) {
+                                continue;
+                            }
+
                             current_macro = Some(&MACROS[i].ttap);
                             current_macro_index = i;
                             current_offset = 0;
@@ -699,6 +711,10 @@ fn main() -> ! {
                         }
 
                         KeyState::THold => {
+                            if !MACROS[i].validate(&MacroType::TapHold) {
+                                continue;
+                            }
+
                             current_macro = Some(&MACROS[i].thold);
                             current_macro_index = i;
                             current_offset = 0;
@@ -1020,10 +1036,10 @@ fn parse_command(
         DataCommand::ReadMacro => {
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
-            if index < KEY_COUNT {
-                let offset = ((output[1] as u16) << 8) | output[2] as u16;
+            if index < KEY_COUNT && t < 4{
+                let offset = ((output[2] as u16) << 8) | output[3] as u16;
                 if offset < MACRO_LENGTH {
-                    let length = output[3] as usize;
+                    let length = output[4] as usize;
                     if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
                         let t = match t {
                             1 => MacroType::Hold,
@@ -1032,8 +1048,8 @@ fn parse_command(
                             _ => MacroType::Tap,
                         };
                         let macro_data: [u8; 4096] = *MACROS[index].read(&t);
-                        output[4..].copy_from_slice(
-                            &macro_data[(offset + 2) as usize..(offset as usize + length + 2)],
+                        output[5..].copy_from_slice(
+                            &macro_data[(offset) as usize..(offset as usize + length)],
                         );
                     } else {
                         output[0] = DataCommand::Error as u8;
@@ -1049,21 +1065,23 @@ fn parse_command(
         DataCommand::WriteMacro => {
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
-            if index < KEY_COUNT {
-                let offset = ((output[1] as u16) << 8) | output[2] as u16;
+            if index < KEY_COUNT && t < 4 {
+                let offset = ((output[2] as u16) << 8) | output[3] as u16;
                 if offset < MACRO_LENGTH {
-                    let length = output[3] as usize;
+                    let length = output[4] as usize;
                     if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
                         let t = match t {
+                            0 => MacroType::Tap,
                             1 => MacroType::Hold,
                             2 => MacroType::DoubleTap,
                             3 => MacroType::TapHold,
+                            
                             _ => MacroType::Tap,
                         };
                         let mut macro_data: [u8; 4096] = *MACROS[index].read(&t);
                         macro_data[1] = 0;
-                        macro_data[(offset + 2) as usize..(offset as usize + length + 2)]
-                            .copy_from_slice(&output[4..]);
+                        macro_data[(offset) as usize..(offset as usize + length)]
+                            .copy_from_slice(&output[5..]);
                         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
                         MACROS[index].write_flash(&t, &macro_data);
                         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
@@ -1073,6 +1091,23 @@ fn parse_command(
                 } else {
                     output[0] = DataCommand::Error as u8;
                 }
+            } else {
+                output[0] = DataCommand::Error as u8;
+            }
+        }
+
+        DataCommand::ClearMacro => {
+            let index = (output[1] >> 2) as usize;
+            let t = (output[1] & 0b11) as usize;
+            if index < KEY_COUNT && t < 4 {
+                let t = match t {
+                    0 => MacroType::Tap,
+                    1 => MacroType::Hold,
+                    2 => MacroType::DoubleTap,
+                    3 => MacroType::TapHold,
+                    _ => MacroType::Tap,
+                };
+                MACROS[index].initialize_flash(&t);
             } else {
                 output[0] = DataCommand::Error as u8;
             }
@@ -1097,7 +1132,9 @@ fn parse_command(
                 output[7] = (checksum >> 16) as u8;
                 output[8] = (checksum >> 8) as u8;
                 output[9] = checksum as u8;
-                if checksum != valid_checksum {
+                if checksum == valid_checksum {
+                    MACROS[index].set_checksum(&t);
+                } else {
                     output[0] = DataCommand::Error as u8;
                 }
             } else {

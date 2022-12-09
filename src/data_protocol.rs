@@ -11,13 +11,14 @@ pub enum DataCommand {
     GetProtocolVersion = 0x01,
     ReadMacro = 0x02,
     WriteMacro = 0x03,
-    ValidateMacro = 0x04,
-    ReadConfig = 0x05,
-    WriteConfig = 0x06,
-    GetLed = 0x07,
-    SetLed = 0x08,
-    ReadKeyConfig = 0x09,
-    WriteKeyConfig = 0x0A,
+    ClearMacro = 0x04,
+    ValidateMacro = 0x05,
+    ReadConfig = 0x06,
+    WriteConfig = 0x07,
+    GetLed = 0x08,
+    SetLed = 0x09,
+    ReadKeyConfig = 0x0A,
+    WriteKeyConfig = 0x0B,
 
 
     // Extra commands not included in the count
