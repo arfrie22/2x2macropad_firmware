@@ -258,33 +258,36 @@ impl KeyMacro {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct KeyConfig {
     key_mode: KeyMode,
-    key_data: u16,
+    keyboard_data: u8,
+    consumer_data: u16,
     key_color: RGB8,
 }
 
 impl PackedStruct for KeyConfig {
-    type ByteArray = [u8; 6];
+    type ByteArray = [u8; 7];
 
     fn pack(&self) -> packed_struct::PackingResult<Self::ByteArray> {
-        let mut bytes = [0u8; 6];
+        let mut bytes = [0u8; 7];
 
         bytes[0] = self.key_mode as u8;
-        bytes[1..3].copy_from_slice(&self.key_data.to_le_bytes());
-        bytes[3] = self.key_color.r;
-        bytes[4] = self.key_color.g;
-        bytes[5] = self.key_color.b;
+        bytes[1] = self.keyboard_data;
+        bytes[2..4].copy_from_slice(&self.consumer_data.to_le_bytes());
+        bytes[4] = self.key_color.r;
+        bytes[5] = self.key_color.g;
+        bytes[6] = self.key_color.b;
 
         Ok(bytes)
     }
 
     fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
         Ok(KeyConfig {
-            key_mode: KeyMode::from_u8(src[0]).unwrap_or(KeyMode::Default),
-            key_data: u16::from_le_bytes([src[1], src[2]]),
+            key_mode: KeyMode::from_u8(src[0]).unwrap_or(KeyMode::MacroMode),
+            keyboard_data: src[1],
+            consumer_data: u16::from_le_bytes([src[2], src[3]]),
             key_color: RGB8 {
-                r: src[3],
-                g: src[4],
-                b: src[5],
+                r: src[4],
+                g: src[5],
+                b: src[6],
             },
         })
     }
@@ -293,8 +296,9 @@ impl PackedStruct for KeyConfig {
 impl Default for KeyConfig {
     fn default() -> Self {
         Self { 
-            key_mode: KeyMode::Default,
-            key_data: 0,
+            key_mode: KeyMode::MacroMode,
+            keyboard_data: 0,
+            consumer_data: 0,
             key_color: RGB8::default(),
          }
     }
@@ -314,7 +318,7 @@ struct Config {
 
 
     //...
-    #[packed_field(element_size_bytes = "6")]
+    #[packed_field(element_size_bytes = "7")]
     key_configs: [KeyConfig; 4],
     #[packed_field(element_size_bytes = "13")]
     led_config: LedConfig,
@@ -768,9 +772,9 @@ fn main() -> ! {
         if keyboard_input_timer.wait().is_ok() {
             
             for (i, key) in matrix.iter().enumerate() {
-                if config.key_configs[i].key_mode == KeyMode::KeyMode {
+                if config.key_configs[i].key_mode == KeyMode::KeyboardMode {
                     if *key {
-                        let key_value = (config.key_configs[i].key_data & 0xFF) as u8;
+                        let key_value = config.key_configs[i].keyboard_data;
                         if (0x00..=0xA4).contains(&key_value) || (0xE0..=0xE7).contains(&key_value) {
                             keys[259 - i] = unsafe { mem::transmute(key_value) };
                         } else {
@@ -805,7 +809,7 @@ fn main() -> ! {
             for (i, key) in matrix.iter().enumerate() {
                 if config.key_configs[i].key_mode == KeyMode::ConsumerMode {
                     if *key {
-                        let consumer_value = config.key_configs[i].key_data;
+                        let consumer_value = config.key_configs[i].consumer_data;
                         if (0x00..=0x06).contains(&consumer_value)
                             || (0x20..=0x22).contains(&consumer_value)
                             || (0x30..=0x36).contains(&consumer_value)
@@ -909,7 +913,7 @@ fn main() -> ! {
             }
 
             for (i, key) in matrix.iter().enumerate() {
-                if *key && (config.key_configs[i].key_mode == KeyMode::KeyMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode) {
+                if *key && (config.key_configs[i].key_mode == KeyMode::KeyboardMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode) {
                     backlight[i] = config.key_configs[i].key_color;
                 }
             }
@@ -961,7 +965,7 @@ fn get_key_states(
     let mut key_states = *previous_key_state;
 
     for i in 0..KEY_COUNT {
-        if config.key_configs[i].key_mode == KeyMode::KeyMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode {
+        if config.key_configs[i].key_mode == KeyMode::KeyboardMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode {
             key_states[i] = KeyState::Idle;
         }
         match previous_key_state[i] {
@@ -1418,11 +1422,21 @@ fn parse_command(
                     }
                 },
 
-                KeyConfigElements::KeyData => {
+                KeyConfigElements::KeyboardData => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
-                        let key_data = config.key_configs[index].key_data;
-                        output[3..5].copy_from_slice(&key_data.to_le_bytes());
+                        output[3] = config.key_configs[index].keyboard_data;
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::ConsumerData => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        let consumer_data = config.key_configs[index].consumer_data;
+                        output[3..5].copy_from_slice(&consumer_data.to_le_bytes());
                     } else {
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
@@ -1457,7 +1471,7 @@ fn parse_command(
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
                         config.key_configs[index].key_mode =
-                            KeyMode::from_u8(output[3]).unwrap_or(KeyMode::Default);
+                            KeyMode::from_u8(output[3]).unwrap_or(KeyMode::MacroMode);
                         config.write();
                     } else {
                         output[0] = DataCommand::Error as u8;
@@ -1465,10 +1479,21 @@ fn parse_command(
                     }
                 },
 
-                KeyConfigElements::KeyData => {
+                KeyConfigElements::KeyboardData => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
-                        config.key_configs[index].key_data =
+                        config.key_configs[index].keyboard_data = output[3];
+                        config.write();
+                    } else {
+                        output[0] = DataCommand::Error as u8;
+                        output[1] = KeyConfigElements::Error as u8;
+                    }
+                },
+
+                KeyConfigElements::ConsumerData => {
+                    let index = output[2] as usize;
+                    if index < KEY_COUNT {
+                        config.key_configs[index].consumer_data =
                             u16::from_be_bytes(output[3..5].try_into().unwrap());
                         config.write();
                     } else {

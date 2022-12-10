@@ -63,8 +63,9 @@ impl ConfigElements {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum KeyConfigElements {
     KeyMode = 0x00,
-    KeyData = 0x01,
-    KeyColor = 0x02,
+    KeyboardData = 0x01,
+    ConsumerData = 0x02,
+    KeyColor = 0x03,
 
     //...
     Error = 0xFF
@@ -83,9 +84,9 @@ impl KeyConfigElements {
 #[repr(u8)]
 #[derive(PrimitiveEnum_u8, Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum KeyMode {
-    Default = 0x00,
+    MacroMode = 0x00,
     SingleTapMode = 0x01,
-    KeyMode = 0x02,
+    KeyboardMode = 0x02,
     ConsumerMode = 0x03,
 }
 
