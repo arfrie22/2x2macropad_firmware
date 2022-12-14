@@ -38,6 +38,7 @@ log = {default-features = false, version = "0.4"}
 crc = "3.0"
 strum_macros = "0.24"
 strum = { version = "0.24", default-features = false, features = ["strum_macros", "derive"] }
+macropad_protocol = { git = "https://github.com/arfrie22/2x2macropad_protocol", default-features = false }
 
 # cargo build/run
 [profile.dev]

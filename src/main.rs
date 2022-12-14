@@ -14,17 +14,18 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 use crc::{Crc, CRC_32_CKSUM};
-use data_protocol::ConfigElements;
-use data_protocol::KeyConfigElements;
-use data_protocol::KeyMode;
-use data_protocol::LedCommand;
+use macropad_protocol::data_protocol::ConfigElements;
+use macropad_protocol::data_protocol::KeyConfigElements;
+use macropad_protocol::data_protocol::KeyMode;
+use macropad_protocol::data_protocol::LedCommand;
 
 use embedded_time::duration::Milliseconds;
 use hal::timer::CountDown;
 use led_effect::LedConfig;
 use led_effect::LedEffect;
 use led_effect::STRIP_LEN;
-use macro_protocol::MacroCommand;
+use macropad_protocol::hid_wrapper;
+use macropad_protocol::macro_protocol::MacroCommand;
 use packed_struct::prelude::*;
 use smart_leds::gamma;
 pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
@@ -36,8 +37,8 @@ use core::mem;
 
 use arrayvec::ArrayVec;
 
-use data_protocol::{DataCommand, PROTOCOL_VERSION};
 use hal::rom_data::reset_to_usb_boot;
+use macropad_protocol::data_protocol::{DataCommand, PROTOCOL_VERSION};
 use rp2040_hal as hal;
 
 use cortex_m::delay::Delay;
@@ -45,6 +46,8 @@ use cortex_m::prelude::*;
 use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::*;
+
+use strum::EnumCount;
 
 use fugit::{ExtU32, MicrosDurationU32};
 use hal::entry;
@@ -77,11 +80,7 @@ use smart_leds::{brightness, SmartLedsWrite, RGB8};
 // Import the actual crate to handle the Ws2812 protocol:
 use ws2812_pio::Ws2812;
 
-pub mod data_protocol;
-
 pub mod led_effect;
-
-pub mod macro_protocol;
 
 #[repr(C, align(4096))]
 struct FlashBlock {
@@ -295,12 +294,12 @@ impl PackedStruct for KeyConfig {
 
 impl Default for KeyConfig {
     fn default() -> Self {
-        Self { 
+        Self {
             key_mode: KeyMode::MacroMode,
             keyboard_data: 0,
             consumer_data: 0,
             key_color: RGB8::default(),
-         }
+        }
     }
 }
 
@@ -315,7 +314,6 @@ struct Config {
     hold_speed: u32,
     #[packed_field(endian = "lsb")]
     default_delay: u32,
-
 
     //...
     #[packed_field(element_size_bytes = "7")]
@@ -613,22 +611,22 @@ fn main() -> ! {
                         data[1] = 0x00;
                         data[2] = 0xFF;
                         data[3] = 0xFF;
-                    },
+                    }
                     MacroType::Hold => {
                         data[1] = 0xFF;
                         data[2] = 0x00;
                         data[3] = 0xFF;
-                    },
+                    }
                     MacroType::DoubleTap => {
                         data[1] = 0xFF;
                         data[2] = 0xFF;
                         data[3] = 0x00;
-                    },
+                    }
                     MacroType::TapHold => {
                         data[1] = 0xFF;
                         data[2] = 0x00;
                         data[3] = 0x00;
-                    },
+                    }
                 }
                 data[4] = MacroCommand::CommandPressKey as u8;
                 data[5] = Keyboard::F as u8;
@@ -650,8 +648,11 @@ fn main() -> ! {
     }
 
     let mut config = get_config();
-    ws.write(brightness(backlight.iter().copied(), config.led_config.brightness))
-        .unwrap();
+    ws.write(brightness(
+        backlight.iter().copied(),
+        config.led_config.brightness,
+    ))
+    .unwrap();
 
     // delay.delay_ms(100);
 
@@ -667,8 +668,6 @@ fn main() -> ! {
     let mut key_change = false;
     let mut consumer_change = false;
 
-    
-
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
         let mut key_states =
@@ -678,7 +677,6 @@ fn main() -> ! {
 
         if !key_change && !consumer_change && macro_delay.wait().is_ok() {
             if let Some(c_macro) = current_macro {
-
                 let (new_offset, delay, is_done) = read_macro(
                     current_offset,
                     c_macro,
@@ -700,7 +698,9 @@ fn main() -> ! {
                 }
 
                 current_offset = new_offset;
-                macro_delay.start(delay.unwrap_or_else( || MicrosDurationU32::micros(config.default_delay)));
+                macro_delay.start(
+                    delay.unwrap_or_else(|| MicrosDurationU32::micros(config.default_delay)),
+                );
 
                 key_change = true;
                 consumers = [Consumer::Unassigned; 4];
@@ -770,18 +770,13 @@ fn main() -> ! {
         }
 
         if keyboard_input_timer.wait().is_ok() {
-            
             for (i, key) in matrix.iter().enumerate() {
                 if config.key_configs[i].key_mode == KeyMode::KeyboardMode {
                     if *key {
-                        let key_value = config.key_configs[i].keyboard_data;
-                        if (0x00..=0xA4).contains(&key_value) || (0xE0..=0xE7).contains(&key_value) {
-                            keys[259 - i] = unsafe { mem::transmute(key_value) };
-                        } else {
-                            keys[259 - i] = Keyboard::NoEventIndicated;
-                        }
-                    }
-                    else {
+                        keys[259 - i] =
+                            hid_wrapper::keyboard_from_u8(config.key_configs[i].keyboard_data)
+                                .unwrap_or(Keyboard::NoEventIndicated);
+                    } else {
                         keys[259 - i] = Keyboard::NoEventIndicated;
                     }
                 }
@@ -805,34 +800,12 @@ fn main() -> ! {
         }
 
         if consumer_input_timer.wait().is_ok() {
-
             for (i, key) in matrix.iter().enumerate() {
                 if config.key_configs[i].key_mode == KeyMode::ConsumerMode {
                     if *key {
-                        let consumer_value = config.key_configs[i].consumer_data;
-                        if (0x00..=0x06).contains(&consumer_value)
-                            || (0x20..=0x22).contains(&consumer_value)
-                            || (0x30..=0x36).contains(&consumer_value)
-                            || (0x40..=0x48).contains(&consumer_value)
-                            || (0x60..=0x66).contains(&consumer_value)
-                            || (0x80..=0x9E).contains(&consumer_value)
-                            || (0x90..=0x92).contains(&consumer_value)
-                            || (0xA0..=0xA4).contains(&consumer_value)
-                            || (0xB0..=0xCE).contains(&consumer_value)
-                            || (0xE0..=0xEA).contains(&consumer_value)
-                            || (0xF0..=0xF5).contains(&consumer_value)
-                            || (0x100..=0x10D).contains(&consumer_value)
-                            || (0x150..=0x155).contains(&consumer_value)
-                            || (0x160..=0x16A).contains(&consumer_value)
-                            || (0x170..=0x174).contains(&consumer_value)
-                            || (0x180..=0x1BA).contains(&consumer_value)
-                            || (0x1BC..=0x1C7).contains(&consumer_value)
-                            || (0x200..=0x29C).contains(&consumer_value)
-                        {
-                            consumers[i] = unsafe { mem::transmute(consumer_value) };
-                        } else {
-                            consumers[i] = Consumer::Unassigned;
-                        }
+                        consumers[i] =
+                            hid_wrapper::consumer_from_u16(config.key_configs[i].consumer_data)
+                                .unwrap_or(Consumer::Unassigned);
                     } else {
                         consumers[i] = Consumer::Unassigned;
                     }
@@ -888,10 +861,7 @@ fn main() -> ! {
                     core::panic!("Failed to read raw_hid report: {:?}", e)
                 }
                 Ok(data) => {
-                    let data = parse_command(
-                        &data,
-                        &mut config,
-                    );
+                    let data = parse_command(&data, &mut config);
 
                     match raw_hid.write_report(&data) {
                         Err(UsbHidError::WouldBlock) => {}
@@ -913,7 +883,10 @@ fn main() -> ! {
             }
 
             for (i, key) in matrix.iter().enumerate() {
-                if *key && (config.key_configs[i].key_mode == KeyMode::KeyboardMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode) {
+                if *key
+                    && (config.key_configs[i].key_mode == KeyMode::KeyboardMode
+                        || config.key_configs[i].key_mode == KeyMode::ConsumerMode)
+                {
                     backlight[i] = config.key_configs[i].key_color;
                 }
             }
@@ -965,7 +938,9 @@ fn get_key_states(
     let mut key_states = *previous_key_state;
 
     for i in 0..KEY_COUNT {
-        if config.key_configs[i].key_mode == KeyMode::KeyboardMode || config.key_configs[i].key_mode == KeyMode::ConsumerMode {
+        if config.key_configs[i].key_mode == KeyMode::KeyboardMode
+            || config.key_configs[i].key_mode == KeyMode::ConsumerMode
+        {
             key_states[i] = KeyState::Idle;
         }
         match previous_key_state[i] {
@@ -1029,12 +1004,7 @@ fn read_macro(
     backlight: &mut Option<RGB8>,
     keys: &mut [Keyboard; 260],
     consumer: &mut Consumer,
-
-) -> (
-    usize,
-    Option<MicrosDurationU32>,
-    bool,
-) {
+) -> (usize, Option<MicrosDurationU32>, bool) {
     let mut consumers = ArrayVec::<Consumer, 4>::new();
     let mut offset = current_offset;
     let mut delay = None;
@@ -1064,8 +1034,11 @@ fn read_macro(
             }
             MacroCommand::CommandPressKey => {
                 let key = macro_data[offset];
-                if (0x00..=0xA4).contains(&key) || (0xE0..=0xE7).contains(&key) {
-                    keys[key as usize] = unsafe { mem::transmute(key) };
+
+                let key_value = hid_wrapper::keyboard_from_u8(key);
+
+                if let Some(key_value) = key_value {
+                    keys[key as usize] = key_value;
                 }
 
                 offset += 1;
@@ -1080,32 +1053,21 @@ fn read_macro(
                 let consumer_value =
                     u16::from_le_bytes(macro_data[offset..offset + 2].try_into().unwrap());
 
-                if (0x00..=0x06).contains(&consumer_value)
-                    || (0x20..=0x22).contains(&consumer_value)
-                    || (0x30..=0x36).contains(&consumer_value)
-                    || (0x40..=0x48).contains(&consumer_value)
-                    || (0x60..=0x66).contains(&consumer_value)
-                    || (0x80..=0x9E).contains(&consumer_value)
-                    || (0x90..=0x92).contains(&consumer_value)
-                    || (0xA0..=0xA4).contains(&consumer_value)
-                    || (0xB0..=0xCE).contains(&consumer_value)
-                    || (0xE0..=0xEA).contains(&consumer_value)
-                    || (0xF0..=0xF5).contains(&consumer_value)
-                    || (0x100..=0x10D).contains(&consumer_value)
-                    || (0x150..=0x155).contains(&consumer_value)
-                    || (0x160..=0x16A).contains(&consumer_value)
-                    || (0x170..=0x174).contains(&consumer_value)
-                    || (0x180..=0x1BA).contains(&consumer_value)
-                    || (0x1BC..=0x1C7).contains(&consumer_value)
-                    || (0x200..=0x29C).contains(&consumer_value)
-                {
-                    *consumer = unsafe { mem::transmute(consumer_value) };
+                let consumer_key = hid_wrapper::consumer_from_u16(consumer_value);
+
+                if let Some(consumer_key) = consumer_key {
+                    *consumer = consumer_key;
                 }
 
                 offset += 2;
             }
             MacroCommand::CommandSetLed => {
-                let color = (macro_data[offset], macro_data[offset + 1], macro_data[offset + 2]).into();
+                let color = (
+                    macro_data[offset],
+                    macro_data[offset + 1],
+                    macro_data[offset + 2],
+                )
+                    .into();
                 *backlight = Some(color);
 
                 offset += 3;
@@ -1123,10 +1085,7 @@ fn read_macro(
     (offset, delay, is_done)
 }
 
-fn parse_command(
-    data: &GenericInOutMsg,
-    config: &mut Config,
-) -> GenericInOutMsg {
+fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
 
@@ -1141,7 +1100,7 @@ fn parse_command(
         DataCommand::ReadMacro => {
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
-            if index < KEY_COUNT && t < 4{
+            if index < KEY_COUNT && t < 4 {
                 let offset = ((output[2] as u16) << 8) | output[3] as u16;
                 if offset < MACRO_LENGTH {
                     let length = output[4] as usize;
@@ -1180,7 +1139,7 @@ fn parse_command(
                             1 => MacroType::Hold,
                             2 => MacroType::DoubleTap,
                             3 => MacroType::TapHold,
-                            
+
                             _ => MacroType::Tap,
                         };
                         let mut macro_data: [u8; 4096] = *MACROS[index].read(&t);
@@ -1248,46 +1207,48 @@ fn parse_command(
         }
 
         DataCommand::ReadConfig => {
-            let config_command = ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
+            let config_command =
+                ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
 
             match config_command {
                 ConfigElements::Version => {
                     output[2] = (PROTOCOL_VERSION >> 8) as u8;
                     output[3] = PROTOCOL_VERSION as u8;
-                },
+                }
                 ConfigElements::TapSpeed => {
                     output[2] = (config.tap_speed >> 24) as u8;
                     output[3] = (config.tap_speed >> 16) as u8;
                     output[4] = (config.tap_speed >> 8) as u8;
                     output[5] = config.tap_speed as u8;
-                },
+                }
                 ConfigElements::HoldSpeed => {
                     output[2] = (config.hold_speed >> 24) as u8;
                     output[3] = (config.hold_speed >> 16) as u8;
                     output[4] = (config.hold_speed >> 8) as u8;
                     output[5] = config.hold_speed as u8;
-                },
+                }
                 ConfigElements::DefaultDelay => {
                     output[2] = (config.default_delay >> 24) as u8;
                     output[3] = (config.default_delay >> 16) as u8;
                     output[4] = (config.default_delay >> 8) as u8;
                     output[5] = config.default_delay as u8;
-                },
+                }
                 ConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = ConfigElements::Error as u8;
-                },
+                }
             }
         }
 
         DataCommand::WriteConfig => {
-            let config_command = ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
+            let config_command =
+                ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
 
             match config_command {
                 ConfigElements::Version => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = ConfigElements::Error as u8;
-                },
+                }
                 ConfigElements::TapSpeed => {
                     let new_tap_speed = ((output[2] as u32) << 24)
                         | ((output[3] as u32) << 16)
@@ -1295,12 +1256,11 @@ fn parse_command(
                         | output[5] as u32;
                     if new_tap_speed > 0 {
                         config.tap_speed = new_tap_speed;
-                        
                     } else {
                         output[0] = DataCommand::Error as u8;
                         output[1] = ConfigElements::Error as u8;
                     }
-                },
+                }
                 ConfigElements::HoldSpeed => {
                     let new_hold_speed = ((output[2] as u32) << 24)
                         | ((output[3] as u32) << 16)
@@ -1313,7 +1273,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = ConfigElements::Error as u8;
                     }
-                },
+                }
                 ConfigElements::DefaultDelay => {
                     let new_default_delay = ((output[2] as u32) << 24)
                         | ((output[3] as u32) << 16)
@@ -1326,11 +1286,11 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = ConfigElements::Error as u8;
                     }
-                },
+                }
                 ConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = ConfigElements::Error as u8;
-                },
+                }
             }
         }
 
@@ -1338,29 +1298,29 @@ fn parse_command(
             let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
 
             match led_command {
-                LedCommand::None => {},
+                LedCommand::None => {}
                 LedCommand::BaseColor => {
                     let color = config.led_config.base_color;
                     output[2] = color.r;
                     output[3] = color.g;
                     output[4] = color.b;
-                },
+                }
                 LedCommand::Effect => {
                     output[2] = config.led_config.effect as u8;
-                },
+                }
                 LedCommand::Brightness => {
                     output[2] = config.led_config.brightness;
-                },
+                }
                 LedCommand::EffectSpeed => {
                     output[2..6].copy_from_slice(&config.led_config.effect_speed.to_le_bytes());
-                },
+                }
                 LedCommand::EffectOffset => {
                     output[2..6].copy_from_slice(&config.led_config.effect_offset.to_le_bytes());
-                },
+                }
                 LedCommand::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = LedCommand::Error as u8;
-                },
+                }
             }
         }
 
@@ -1380,7 +1340,7 @@ fn parse_command(
                 }
                 LedCommand::Effect => {
                     config.led_config.effect =
-                            LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
+                        LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
 
                     config.write();
                 }
@@ -1391,7 +1351,7 @@ fn parse_command(
                 }
                 LedCommand::EffectSpeed => {
                     config.led_config.effect_speed =
-                            f32::from_le_bytes(output[2..6].try_into().unwrap());
+                        f32::from_le_bytes(output[2..6].try_into().unwrap());
 
                     config.write();
                 }
@@ -1409,7 +1369,8 @@ fn parse_command(
         }
 
         DataCommand::ReadKeyConfig => {
-            let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+            let key_config_command =
+                KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
@@ -1420,7 +1381,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::KeyboardData => {
                     let index = output[2] as usize;
@@ -1430,7 +1391,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::ConsumerData => {
                     let index = output[2] as usize;
@@ -1441,7 +1402,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::KeyColor => {
                     let index = output[2] as usize;
@@ -1454,17 +1415,18 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = KeyConfigElements::Error as u8;
-                },
+                }
             }
         }
 
         DataCommand::WriteKeyConfig => {
-            let key_config_command = KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+            let key_config_command =
+                KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
@@ -1477,7 +1439,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::KeyboardData => {
                     let index = output[2] as usize;
@@ -1488,7 +1450,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::ConsumerData => {
                     let index = output[2] as usize;
@@ -1500,7 +1462,7 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::KeyColor => {
                     let index = output[2] as usize;
@@ -1515,12 +1477,12 @@ fn parse_command(
                         output[0] = DataCommand::Error as u8;
                         output[1] = KeyConfigElements::Error as u8;
                     }
-                },
+                }
 
                 KeyConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = KeyConfigElements::Error as u8;
-                },
+                }
             }
         }
 
