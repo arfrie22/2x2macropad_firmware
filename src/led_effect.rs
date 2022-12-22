@@ -1,67 +1,41 @@
-use core::mem;
+use core::{mem, borrow::Borrow};
 
+use macropad_protocol::data_protocol::LedEffect;
 use num_enum::{IntoPrimitive, FromPrimitive};
 use smart_leds::RGB8;
 use packed_struct::prelude::*;
 use strum::EnumCount;
 
-#[repr(u8)]
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    PrimitiveEnum,
-    Hash,
-    IntoPrimitive,
-    FromPrimitive,
-)]
-pub enum LedEffect {
-    #[num_enum(default)]
-    None = 0x00,
-    Static = 0x01,
-    Breathing = 0x02,
-    BreathingSpaced = 0x03,
-    ColorCycle = 0x04,
-    Rainbow = 0x05,
-}
-
-impl LedEffect {
-    pub fn apply(
-        self,
-        backlight: &mut [RGB8; STRIP_LEN],
-        led_config: &mut LedConfig,
-    ) {
-        match self {
-            LedEffect::None => effect_none(
-                backlight,
-                led_config
-            ),
-            LedEffect::Static => effect_static(
-                backlight,
-                led_config
-            ),
-            LedEffect::Breathing => effect_breathing(
-                backlight,
-                led_config
-            ),
-            LedEffect::BreathingSpaced => effect_breathing_spaced(
-                backlight,
-                led_config
-            ),
-            LedEffect::ColorCycle => effect_color_cycle(
-                backlight,
-                led_config
-            ),
-            LedEffect::Rainbow => effect_rainbow(
-                backlight,
-                led_config
-            ),
-        };
-    }
+pub fn apply(
+    backlight: &mut [RGB8; STRIP_LEN],
+    led_config: &mut LedConfig,
+) {
+    match led_config.effect {
+        LedEffect::None => effect_none(
+            backlight,
+            led_config
+        ),
+        LedEffect::Static => effect_static(
+            backlight,
+            led_config
+        ),
+        LedEffect::Breathing => effect_breathing(
+            backlight,
+            led_config
+        ),
+        LedEffect::BreathingSpaced => effect_breathing_spaced(
+            backlight,
+            led_config
+        ),
+        LedEffect::ColorCycle => effect_color_cycle(
+            backlight,
+            led_config
+        ),
+        LedEffect::Rainbow => effect_rainbow(
+            backlight,
+            led_config
+        ),
+    };
 }
 
 pub const STRIP_LEN: usize = 4;
@@ -280,6 +254,6 @@ impl LedConfig {
     pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN]) {
         self.timer += self.effect_speed;
 
-        self.effect.apply(backlight, self);
+        apply(backlight, self);
     }
 }
