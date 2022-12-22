@@ -1090,15 +1090,14 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
         DataCommand::None => {}
 
         DataCommand::GetProtocolVersion => {
-            output[1] = (PROTOCOL_VERSION >> 8) as u8;
-            output[2] = PROTOCOL_VERSION as u8;
+            output[1..3].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
         }
 
         DataCommand::ReadMacro => {
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
             if index < KEY_COUNT && t < 4 {
-                let offset = ((output[2] as u16) << 8) | output[3] as u16;
+                let offset = u16::from_le_bytes(output[2..4].try_into().unwrap());
                 if offset < MACRO_LENGTH {
                     let length = output[4] as usize;
                     if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
@@ -1127,7 +1126,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
             if index < KEY_COUNT && t < 4 {
-                let offset = ((output[2] as u16) << 8) | output[3] as u16;
+                let offset = u16::from_le_bytes(output[2..4].try_into().unwrap());
                 if offset < MACRO_LENGTH {
                     let length = output[4] as usize;
                     if length > 0 && length < 60 && (offset + (length as u16)) < MACRO_LENGTH {
@@ -1178,10 +1177,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
             let index = (output[1] >> 2) as usize;
             let t = (output[1] & 0b11) as usize;
             if index < KEY_COUNT {
-                let valid_checksum = ((output[2] as u32) << 24)
-                    | ((output[3] as u32) << 16)
-                    | ((output[4] as u32) << 8)
-                    | output[5] as u32;
+                let valid_checksum = u32::from_le_bytes(output[2..6].try_into().unwrap());
                 let t = match t {
                     1 => MacroType::Hold,
                     2 => MacroType::DoubleTap,
@@ -1189,10 +1185,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     _ => MacroType::Tap,
                 };
                 let checksum = MACROS[index].get_checksum(&t);
-                output[6] = (checksum >> 24) as u8;
-                output[7] = (checksum >> 16) as u8;
-                output[8] = (checksum >> 8) as u8;
-                output[9] = checksum as u8;
+                output[6..10].copy_from_slice(&checksum.to_le_bytes());
                 if checksum == valid_checksum {
                     MACROS[index].set_checksum(&t);
                 } else {
@@ -1209,26 +1202,16 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
             match config_command {
                 ConfigElements::Version => {
-                    output[2] = (PROTOCOL_VERSION >> 8) as u8;
-                    output[3] = PROTOCOL_VERSION as u8;
+                    output[2..4].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
                 }
                 ConfigElements::TapSpeed => {
-                    output[2] = (config.tap_speed >> 24) as u8;
-                    output[3] = (config.tap_speed >> 16) as u8;
-                    output[4] = (config.tap_speed >> 8) as u8;
-                    output[5] = config.tap_speed as u8;
+                    output[2..6].copy_from_slice(&config.tap_speed.to_le_bytes());
                 }
                 ConfigElements::HoldSpeed => {
-                    output[2] = (config.hold_speed >> 24) as u8;
-                    output[3] = (config.hold_speed >> 16) as u8;
-                    output[4] = (config.hold_speed >> 8) as u8;
-                    output[5] = config.hold_speed as u8;
+                    output[2..6].copy_from_slice(&config.hold_speed.to_le_bytes());
                 }
                 ConfigElements::DefaultDelay => {
-                    output[2] = (config.default_delay >> 24) as u8;
-                    output[3] = (config.default_delay >> 16) as u8;
-                    output[4] = (config.default_delay >> 8) as u8;
-                    output[5] = config.default_delay as u8;
+                    output[2..6].copy_from_slice(&config.default_delay.to_le_bytes());
                 }
                 ConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
@@ -1247,10 +1230,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     output[1] = ConfigElements::Error as u8;
                 }
                 ConfigElements::TapSpeed => {
-                    let new_tap_speed = ((output[2] as u32) << 24)
-                        | ((output[3] as u32) << 16)
-                        | ((output[4] as u32) << 8)
-                        | output[5] as u32;
+                    let new_tap_speed = u32::from_le_bytes(output[2..6].try_into().unwrap());
                     if new_tap_speed > 0 {
                         config.tap_speed = new_tap_speed;
                     } else {
@@ -1259,10 +1239,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     }
                 }
                 ConfigElements::HoldSpeed => {
-                    let new_hold_speed = ((output[2] as u32) << 24)
-                        | ((output[3] as u32) << 16)
-                        | ((output[4] as u32) << 8)
-                        | output[5] as u32;
+                    let new_hold_speed = u32::from_le_bytes(output[2..6].try_into().unwrap());
                     if new_hold_speed > 0 {
                         config.hold_speed = new_hold_speed;
                         config.write()
@@ -1272,10 +1249,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     }
                 }
                 ConfigElements::DefaultDelay => {
-                    let new_default_delay = ((output[2] as u32) << 24)
-                        | ((output[3] as u32) << 16)
-                        | ((output[4] as u32) << 8)
-                        | output[5] as u32;
+                    let new_default_delay = u32::from_le_bytes(output[2..6].try_into().unwrap());
                     if new_default_delay > 0 {
                         config.default_delay = new_default_delay;
                         config.write()
