@@ -24,7 +24,6 @@ use hal::timer::CountDown;
 use led_effect::LedConfig;
 use led_effect::LedEffect;
 use led_effect::STRIP_LEN;
-use macropad_protocol::hid_wrapper;
 use macropad_protocol::macro_protocol::MacroCommand;
 use packed_struct::prelude::*;
 use smart_leds::gamma;
@@ -280,7 +279,7 @@ impl PackedStruct for KeyConfig {
 
     fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
         Ok(KeyConfig {
-            key_mode: KeyMode::from_u8(src[0]).unwrap_or(KeyMode::MacroMode),
+            key_mode: KeyMode::try_from(src[0]).unwrap_or(KeyMode::MacroMode),
             keyboard_data: src[1],
             consumer_data: u16::from_le_bytes([src[2], src[3]]),
             key_color: RGB8 {
@@ -774,8 +773,7 @@ fn main() -> ! {
                 if config.key_configs[i].key_mode == KeyMode::KeyboardMode {
                     if *key {
                         keys[259 - i] =
-                            hid_wrapper::keyboard_from_u8(config.key_configs[i].keyboard_data)
-                                .unwrap_or(Keyboard::NoEventIndicated);
+                            Keyboard::from(config.key_configs[i].keyboard_data);
                     } else {
                         keys[259 - i] = Keyboard::NoEventIndicated;
                     }
@@ -804,8 +802,7 @@ fn main() -> ! {
                 if config.key_configs[i].key_mode == KeyMode::ConsumerMode {
                     if *key {
                         consumers[i] =
-                            hid_wrapper::consumer_from_u16(config.key_configs[i].consumer_data)
-                                .unwrap_or(Consumer::Unassigned);
+                            Consumer::from(config.key_configs[i].consumer_data);
                     } else {
                         consumers[i] = Consumer::Unassigned;
                     }
@@ -1013,7 +1010,7 @@ fn read_macro(
     let macro_data = current_macro.read();
 
     let mut current_macro =
-        MacroCommand::from_u8(macro_data[offset]).unwrap_or(MacroCommand::CommandTerminator);
+        MacroCommand::from(macro_data[offset]);
     if current_macro == MacroCommand::CommandTerminator {
         is_done = true;
         offset = 0;
@@ -1035,9 +1032,9 @@ fn read_macro(
             MacroCommand::CommandPressKey => {
                 let key = macro_data[offset];
 
-                let key_value = hid_wrapper::keyboard_from_u8(key);
+                let key_value = Keyboard::from(key);
 
-                if let Some(key_value) = key_value {
+                if key_value != Keyboard::NoEventIndicated {
                     keys[key as usize] = key_value;
                 }
 
@@ -1053,9 +1050,9 @@ fn read_macro(
                 let consumer_value =
                     u16::from_le_bytes(macro_data[offset..offset + 2].try_into().unwrap());
 
-                let consumer_key = hid_wrapper::consumer_from_u16(consumer_value);
+                let consumer_key = Consumer::from(consumer_value);
 
-                if let Some(consumer_key) = consumer_key {
+                if consumer_key != Consumer::Unassigned {
                     *consumer = consumer_key;
                 }
 
@@ -1077,7 +1074,7 @@ fn read_macro(
             }
         };
         current_macro =
-            MacroCommand::from_u8(macro_data[offset]).unwrap_or(MacroCommand::CommandTerminator);
+            MacroCommand::from(macro_data[offset]);
     }
 
     offset += 1;
@@ -1087,7 +1084,7 @@ fn read_macro(
 
 fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg {
     let mut output = data.packet;
-    let command = DataCommand::from_u8(output[0]).unwrap_or(DataCommand::Error);
+    let command = DataCommand::from(output[0]);
 
     match command {
         DataCommand::None => {}
@@ -1208,7 +1205,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
         DataCommand::ReadConfig => {
             let config_command =
-                ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
+                ConfigElements::from(output[1]);
 
             match config_command {
                 ConfigElements::Version => {
@@ -1242,7 +1239,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
         DataCommand::WriteConfig => {
             let config_command =
-                ConfigElements::from_u8(output[1]).unwrap_or(ConfigElements::Error);
+                ConfigElements::from(output[1]);
 
             match config_command {
                 ConfigElements::Version => {
@@ -1295,7 +1292,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
         }
 
         DataCommand::GetLed => {
-            let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
+            let led_command = LedCommand::from(output[1]);
 
             match led_command {
                 LedCommand::None => {}
@@ -1325,7 +1322,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
         }
 
         DataCommand::SetLed => {
-            let led_command = LedCommand::from_u8(output[1]).unwrap_or(LedCommand::Error);
+            let led_command = LedCommand::from(output[1]);
 
             match led_command {
                 LedCommand::None => {}
@@ -1340,7 +1337,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                 }
                 LedCommand::Effect => {
                     config.led_config.effect =
-                        LedEffect::from_u8(output[2]).unwrap_or(LedEffect::None);
+                        LedEffect::from(output[2]);
 
                     config.write();
                 }
@@ -1370,7 +1367,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
         DataCommand::ReadKeyConfig => {
             let key_config_command =
-                KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+                KeyConfigElements::from(output[1]);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
@@ -1426,14 +1423,14 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
         DataCommand::WriteKeyConfig => {
             let key_config_command =
-                KeyConfigElements::from_u8(output[1]).unwrap_or(KeyConfigElements::Error);
+                KeyConfigElements::from(output[1]);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
                         config.key_configs[index].key_mode =
-                            KeyMode::from_u8(output[3]).unwrap_or(KeyMode::MacroMode);
+                            KeyMode::from(output[3]);
                         config.write();
                     } else {
                         output[0] = DataCommand::Error as u8;

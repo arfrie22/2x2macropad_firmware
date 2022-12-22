@@ -1,12 +1,26 @@
 use core::mem;
 
+use num_enum::{IntoPrimitive, FromPrimitive};
 use smart_leds::RGB8;
 use packed_struct::prelude::*;
 use strum::EnumCount;
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    PrimitiveEnum,
+    Hash,
+    IntoPrimitive,
+    FromPrimitive,
+)]
 pub enum LedEffect {
+    #[num_enum(default)]
     None = 0x00,
     Static = 0x01,
     Breathing = 0x02,
@@ -16,14 +30,6 @@ pub enum LedEffect {
 }
 
 impl LedEffect {
-    pub fn from_u8(n: u8) -> Option<LedEffect> {
-        if n < LedEffect::COUNT as u8 {
-            Some(unsafe { mem::transmute(n) })
-        } else {
-            None
-        }
-    }
-
     pub fn apply(
         self,
         backlight: &mut [RGB8; STRIP_LEN],
@@ -248,7 +254,7 @@ impl PackedStruct for LedConfig {
                 g: src[1],
                 b: src[2],
             },
-            effect: LedEffect::from_u8(src[3]).unwrap_or(LedEffect::None),
+            effect: LedEffect::from(src[3]),
             brightness: src[4],
             effect_speed: f32::from_le_bytes([src[5], src[6], src[7], src[8]]),
             effect_offset: f32::from_le_bytes([src[9], src[10], src[11], src[12]]),
