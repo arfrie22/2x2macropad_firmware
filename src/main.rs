@@ -1453,7 +1453,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
                         config.key_configs[index].consumer_data =
-                            u16::from_be_bytes(output[3..5].try_into().unwrap());
+                            u16::from_le_bytes(output[3..5].try_into().unwrap());
                         config.write();
                     } else {
                         output[0] = DataCommand::Error as u8;
