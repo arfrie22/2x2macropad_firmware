@@ -40,6 +40,8 @@ pub fn apply(
 
 pub const STRIP_LEN: usize = 4;
 
+// TODO: Replace speed with period, every animation should loop when the timer reaches 100.0, and the period changes the delta. It should also use the delta time not just a static increment.
+
 pub fn effect_none(
     backlight: &mut [RGB8; STRIP_LEN],
     led_config: &mut LedConfig,
