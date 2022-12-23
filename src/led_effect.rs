@@ -2,6 +2,7 @@ use core::{mem, borrow::Borrow};
 
 use macropad_protocol::data_protocol::LedEffect;
 use num_enum::{IntoPrimitive, FromPrimitive};
+use rp2040_hal::Timer;
 use smart_leds::RGB8;
 use packed_struct::prelude::*;
 use strum::EnumCount;
@@ -69,15 +70,7 @@ pub fn effect_breathing(
 ) {
     let mut color = led_config.base_color;
 
-    while led_config.timer > 100.0 {
-        led_config.timer -= 100.0;
-    }
-
-    while led_config.timer < 0.0 {
-        led_config.timer += 100.0;
-    }
-
-    let mut time = led_config.timer;
+    let mut time = led_config.timer * (100.0/1000.0);
 
     if time > 50.0 {
         time = 100.0 - time;
@@ -103,16 +96,10 @@ pub fn effect_breathing_spaced(
 ) {
     let mut color = led_config.base_color;
 
-    while led_config.timer > 100.0 * STRIP_LEN as f32 {
-        led_config.timer -= 100.0 * STRIP_LEN as f32;
-    }
-
-    while led_config.timer < 0.0 {
-        led_config.timer += 100.0 * STRIP_LEN as f32;
-    }
+    let timer = led_config.timer * ((100.0 * STRIP_LEN as f32)/1000.0);
 
     for (index, led) in backlight.iter_mut().enumerate() {
-        let mut time = led_config.timer;
+        let mut time = timer;
         time -= index as f32 * 100.0;
 
         if !(0.0..=100.0).contains(&time) {
@@ -136,31 +123,19 @@ pub fn effect_color_cycle(
     backlight: &mut [RGB8; STRIP_LEN],
     led_config: &mut LedConfig,
 ) {
-    while led_config.timer > 360.0 {
-        led_config.timer -= 360.0;
-    }
+    let timer = led_config.timer * (360.0/1000.0);
 
-    while led_config.timer < 0.0 {
-        led_config.timer += 360.0;
-    }
-
-    *backlight = [hsv2rgb_u8(led_config.timer, 1.0, 1.0).into(); 4];
+    *backlight = [hsv2rgb_u8(timer, 1.0, 1.0).into(); STRIP_LEN];
 }
 
 pub fn effect_rainbow(
     backlight: &mut [RGB8; STRIP_LEN],
     led_config: &mut LedConfig,
 ) {
-    while led_config.timer > 360.0 * STRIP_LEN as f32 {
-        led_config.timer -= 360.0  * STRIP_LEN as f32;
-    }
-
-    while led_config.timer < 0.0 {
-        led_config.timer += 360.0 * STRIP_LEN as f32;
-    }
+    let timer = led_config.timer * (360.0/1000.0);
 
     for (index, led) in backlight.iter_mut().enumerate() {
-        *led = hsv2rgb_u8((led_config.timer + (index as f32 * 360.0 / STRIP_LEN as f32)) % 360.0, 1.0, 1.0).into();
+        *led = hsv2rgb_u8((timer + (index as f32 * 360.0 / STRIP_LEN as f32)) % 360.0, 1.0, 1.0).into();
     }
 }
 
@@ -201,9 +176,10 @@ pub struct LedConfig {
     pub base_color: RGB8,
     pub effect: LedEffect,
     pub brightness: u8,
-    pub effect_speed: f32,
+    pub effect_period: f32,
     pub effect_offset: f32,
     timer: f32,
+    prev_time: u64,
 }
 
 impl PackedStruct for LedConfig {
@@ -217,7 +193,7 @@ impl PackedStruct for LedConfig {
         bytes[2] = self.base_color.b;
         bytes[3] = self.effect as u8;
         bytes[4] = self.brightness;
-        bytes[5..9].copy_from_slice(&self.effect_speed.to_le_bytes());
+        bytes[5..9].copy_from_slice(&self.effect_period.to_le_bytes());
         bytes[9..13].copy_from_slice(&self.effect_offset.to_le_bytes());
 
         Ok(bytes)
@@ -232,9 +208,10 @@ impl PackedStruct for LedConfig {
             },
             effect: LedEffect::from(src[3]),
             brightness: src[4],
-            effect_speed: f32::from_le_bytes([src[5], src[6], src[7], src[8]]),
+            effect_period: f32::from_le_bytes([src[5], src[6], src[7], src[8]]),
             effect_offset: f32::from_le_bytes([src[9], src[10], src[11], src[12]]),
             timer : 0.0,
+            prev_time: 0,
         })
     }
 }
@@ -245,17 +222,34 @@ impl Default for LedConfig {
             base_color: (0, 0, 0).into(),
             effect: LedEffect::None,
             brightness: 0xA0,
-            effect_speed: 1.0,
+            effect_period: 1.0,
             effect_offset: 0.0,
             timer: 0.0,
+            prev_time: 0,
         }
     }
 }
 
 impl LedConfig {
-    pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN]) {
-        self.timer += self.effect_speed;
+    pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN], timer: &Timer) {
+        // get_counter in micros
+        self.timer += (1.0/self.effect_period) * ((timer.get_counter() - self.prev_time) as f32 / 1000.0);
+
+        self.prev_time = timer.get_counter();
+
+        while self.timer > 1000.0 {
+            self.timer -= 1000.0;
+        }
+    
+        while self.timer < 0.0 {
+            self.timer += 1000.0;
+        }
 
         apply(backlight, self);
+    }
+
+    pub fn reset_timer(&mut self, timer: &Timer) {
+        self.timer = 0.0;
+        self.prev_time = timer.get_counter();
     }
 }

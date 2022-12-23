@@ -383,7 +383,7 @@ dependencies = [
 [[package]]
 name = "macropad_protocol"
 version = "0.1.0"
-source = "git+https://github.com/arfrie22/2x2macropad_protocol#f15d8ec20bfa6c4c7ac891150ef7018b72a1696b"
+source = "git+https://github.com/arfrie22/2x2macropad_protocol#b164291240f5a84ee499c8a7f3bb2ef6a3f828e4"
 dependencies = [
  "num_enum",
  "packed_struct",

@@ -858,7 +858,7 @@ fn main() -> ! {
                     core::panic!("Failed to read raw_hid report: {:?}", e)
                 }
                 Ok(data) => {
-                    let data = parse_command(&data, &mut config);
+                    let data = parse_command(&data, &mut config, &timer);
 
                     match raw_hid.write_report(&data) {
                         Err(UsbHidError::WouldBlock) => {}
@@ -873,7 +873,7 @@ fn main() -> ! {
         }
 
         if led_timer.wait().is_ok() {
-            config.led_config.update(&mut backlight);
+            config.led_config.update(&mut backlight, &timer);
 
             if let Some(led) = macro_backlight {
                 backlight[current_macro_index] = led;
@@ -1082,7 +1082,7 @@ fn read_macro(
     (offset, delay, is_done)
 }
 
-fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg {
+fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from(output[0]);
 
@@ -1282,8 +1282,8 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                 LedCommand::Brightness => {
                     output[2] = config.led_config.brightness;
                 }
-                LedCommand::EffectSpeed => {
-                    output[2..6].copy_from_slice(&config.led_config.effect_speed.to_le_bytes());
+                LedCommand::EffectPeriod => {
+                    output[2..6].copy_from_slice(&config.led_config.effect_period.to_le_bytes());
                 }
                 LedCommand::EffectOffset => {
                     output[2..6].copy_from_slice(&config.led_config.effect_offset.to_le_bytes());
@@ -1313,6 +1313,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
                     config.led_config.effect =
                         LedEffect::from(output[2]);
 
+                    config.led_config.reset_timer(timer);
                     config.write();
                 }
                 LedCommand::Brightness => {
@@ -1320,8 +1321,8 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config) -> GenericInOutMsg
 
                     config.write();
                 }
-                LedCommand::EffectSpeed => {
-                    config.led_config.effect_speed =
+                LedCommand::EffectPeriod => {
+                    config.led_config.effect_period =
                         f32::from_le_bytes(output[2..6].try_into().unwrap());
 
                     config.write();
