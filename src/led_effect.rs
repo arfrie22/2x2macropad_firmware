@@ -92,11 +92,10 @@ pub fn effect_breathing_spaced(
     backlight: &mut [RGB8; STRIP_LEN],
     led_config: &mut LedConfig,
 ) {
-    let mut color = led_config.base_color;
-
     let timer = led_config.timer * ((100.0 * STRIP_LEN as f32)/1000.0);
 
     for (index, led) in backlight.iter_mut().enumerate() {
+        let mut color = led_config.base_color;
         let mut time = timer;
         time -= index as f32 * 100.0;
 
