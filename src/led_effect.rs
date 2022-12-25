@@ -230,16 +230,16 @@ impl Default for LedConfig {
 impl LedConfig {
     pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN], timer: &Timer) {
         // get_counter in micros
-        self.timer += (1.0/self.effect_period) * ((timer.get_counter() - self.prev_time) as f32 / 1000.0);
+        if self.effect_period != 0.0 {
+            self.timer += (1.0/self.effect_period) * ((timer.get_counter() - self.prev_time) as f32 / 1000.0);
 
-        self.prev_time = timer.get_counter();
+            self.prev_time = timer.get_counter();
 
-        while self.timer > 1000.0 {
-            self.timer -= 1000.0;
-        }
-    
-        while self.timer < 0.0 {
-            self.timer += 1000.0;
+            self.timer = self.timer % 1000.0;
+
+            if self.timer < 0.0 {
+                self.timer += 1000.0;
+            }
         }
 
         apply(backlight, self);
