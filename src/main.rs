@@ -603,38 +603,6 @@ fn main() -> ! {
         for t in MacroType::iter() {
             if !key.validate(&t) {
                 key.initialize_flash(&t);
-                let mut data = [0u8; 4096];
-                data[0] = MacroCommand::CommandSetLed as u8;
-                match t {
-                    MacroType::Tap => {
-                        data[1] = 0x00;
-                        data[2] = 0xFF;
-                        data[3] = 0xFF;
-                    }
-                    MacroType::Hold => {
-                        data[1] = 0xFF;
-                        data[2] = 0x00;
-                        data[3] = 0xFF;
-                    }
-                    MacroType::DoubleTap => {
-                        data[1] = 0xFF;
-                        data[2] = 0xFF;
-                        data[3] = 0x00;
-                    }
-                    MacroType::TapHold => {
-                        data[1] = 0xFF;
-                        data[2] = 0x00;
-                        data[3] = 0x00;
-                    }
-                }
-                data[4] = MacroCommand::CommandPressKey as u8;
-                data[5] = Keyboard::F as u8;
-                data[6] = MacroCommand::CommandTerminator as u8;
-                data[7] = MacroCommand::CommandReleaseKey as u8;
-                data[8] = Keyboard::F as u8;
-
-                key.write_flash(&t, &data);
-                key.set_checksum(&t);
             }
         }
     }
@@ -1023,6 +991,10 @@ fn read_macro(
         match current_macro {
             MacroCommand::CommandTerminator => {
                 break;
+            }
+            MacroCommand::CommandSectionAnnotation => {
+                // Not used by keyboard, used by configurator for macro reconstruction
+                offset += 1;
             }
             MacroCommand::CommandDelay => {
                 let delay_bytes = macro_data[offset..offset + 4].try_into().unwrap();
