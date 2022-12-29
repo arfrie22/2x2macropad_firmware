@@ -634,13 +634,12 @@ fn main() -> ! {
 
     let mut key_change = false;
     let mut consumer_change = false;
+    let mut consumers = [Consumer::Unassigned; 4];
 
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
         let mut key_states =
             get_key_states(&matrix, &mut key_timers, &previous_key_states, &config);
-
-        let mut consumers = [Consumer::Unassigned; 4];
 
         if !key_change && !consumer_change && macro_delay.wait().is_ok() {
             if let Some(c_macro) = current_macro {
@@ -670,7 +669,6 @@ fn main() -> ! {
                 );
 
                 key_change = true;
-                consumers = [Consumer::Unassigned; 4];
 
                 if consumers != last_consumer_report.codes {
                     consumer_change = true;
@@ -1029,6 +1027,9 @@ fn read_macro(
                 }
 
                 offset += 2;
+            }
+            MacroCommand::CommandReleaseConsumer => {
+                *consumer = Consumer::Unassigned;
             }
             MacroCommand::CommandSetLed => {
                 let color = (
