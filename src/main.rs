@@ -1111,7 +1111,6 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                             _ => MacroType::Tap,
                         };
                         let mut macro_data: [u8; 4096] = *MACROS[index].read(&t);
-                        macro_data[1] = 0;
                         macro_data[(offset) as usize..(offset as usize + length)]
                             .copy_from_slice(&output[5..]);
                         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
