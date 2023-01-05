@@ -987,6 +987,113 @@ struct CommandState {
     command_iteration: u8,
 }
 
+
+fn key_from_ascii (char: char) -> (Keyboard, Option<bool>) {
+    match char {
+        '`' => (Keyboard::Grave, Some(false)),
+        '1' => (Keyboard::Keyboard1, Some(false)),
+        '2' => (Keyboard::Keyboard2, Some(false)),
+        '3' => (Keyboard::Keyboard3, Some(false)),
+        '4' => (Keyboard::Keyboard4, Some(false)),
+        '5' => (Keyboard::Keyboard5, Some(false)),
+        '6' => (Keyboard::Keyboard6, Some(false)),
+        '7' => (Keyboard::Keyboard7, Some(false)),
+        '8' => (Keyboard::Keyboard8, Some(false)),
+        '9' => (Keyboard::Keyboard9, Some(false)),
+        '0' => (Keyboard::Keyboard0, Some(false)),
+        '-' => (Keyboard::Minus, Some(false)),
+        '=' => (Keyboard::Equal, Some(false)),
+        'q' => (Keyboard::Q, Some(false)),
+        'w' => (Keyboard::W, Some(false)),
+        'e' => (Keyboard::E, Some(false)),
+        'r' => (Keyboard::R, Some(false)),
+        't' => (Keyboard::T, Some(false)),
+        'y' => (Keyboard::Y, Some(false)),
+        'u' => (Keyboard::U, Some(false)),
+        'i' => (Keyboard::I, Some(false)),
+        'o' => (Keyboard::O, Some(false)),
+        'p' => (Keyboard::P, Some(false)),
+        '[' => (Keyboard::LeftBrace, Some(false)),
+        ']' => (Keyboard::RightBrace, Some(false)),
+        '\\' => (Keyboard::Backslash, Some(false)),
+        'a' => (Keyboard::A, Some(false)),
+        's' => (Keyboard::S, Some(false)),
+        'd' => (Keyboard::D, Some(false)),
+        'f' => (Keyboard::F, Some(false)),
+        'g' => (Keyboard::G, Some(false)),
+        'h' => (Keyboard::H, Some(false)),
+        'j' => (Keyboard::J, Some(false)),
+        'k' => (Keyboard::K, Some(false)),
+        'l' => (Keyboard::L, Some(false)),
+        ';' => (Keyboard::Semicolon, Some(false)),
+        '\'' => (Keyboard::Apostrophe, Some(false)),
+        'z' => (Keyboard::Z, Some(false)),
+        'x' => (Keyboard::X, Some(false)),
+        'c' => (Keyboard::C, Some(false)),
+        'v' => (Keyboard::V, Some(false)),
+        'b' => (Keyboard::B, Some(false)),
+        'n' => (Keyboard::N, Some(false)),
+        'm' => (Keyboard::M, Some(false)),
+        ',' => (Keyboard::Comma, Some(false)),
+        '.' => (Keyboard::Dot, Some(false)),
+        '/' => (Keyboard::ForwardSlash, Some(false)),
+
+        '~' => (Keyboard::Grave, Some(true)),
+        '!' => (Keyboard::Keyboard1, Some(true)),
+        '@' => (Keyboard::Keyboard2, Some(true)),
+        '#' => (Keyboard::Keyboard3, Some(true)),
+        '$' => (Keyboard::Keyboard4, Some(true)),
+        '%' => (Keyboard::Keyboard5, Some(true)),
+        '^' => (Keyboard::Keyboard6, Some(true)),
+        '&' => (Keyboard::Keyboard7, Some(true)),
+        '*' => (Keyboard::Keyboard8, Some(true)),
+        '(' => (Keyboard::Keyboard9, Some(true)),
+        ')' => (Keyboard::Keyboard0, Some(true)),
+        '_' => (Keyboard::Minus, Some(true)),
+        '+' => (Keyboard::Equal, Some(true)),
+        'Q' => (Keyboard::Q, Some(true)),
+        'W' => (Keyboard::W, Some(true)),
+        'E' => (Keyboard::E, Some(true)),
+        'R' => (Keyboard::R, Some(true)),
+        'T' => (Keyboard::T, Some(true)),
+        'Y' => (Keyboard::Y, Some(true)),
+        'U' => (Keyboard::U, Some(true)),
+        'I' => (Keyboard::I, Some(true)),
+        'O' => (Keyboard::O, Some(true)),
+        'P' => (Keyboard::P, Some(true)),
+        '{' => (Keyboard::LeftBrace, Some(true)),
+        '}' => (Keyboard::RightBrace, Some(true)),
+        '|' => (Keyboard::Backslash, Some(true)),
+        'A' => (Keyboard::A, Some(true)),
+        'S' => (Keyboard::S, Some(true)),
+        'D' => (Keyboard::D, Some(true)),
+        'F' => (Keyboard::F, Some(true)),
+        'G' => (Keyboard::G, Some(true)),
+        'H' => (Keyboard::H, Some(true)),
+        'J' => (Keyboard::J, Some(true)),
+        'K' => (Keyboard::K, Some(true)),
+        'L' => (Keyboard::L, Some(true)),
+        ':' => (Keyboard::Semicolon, Some(true)),
+        '"' => (Keyboard::Apostrophe, Some(true)),
+        'Z' => (Keyboard::Z, Some(true)),
+        'X' => (Keyboard::X, Some(true)),
+        'C' => (Keyboard::C, Some(true)),
+        'V' => (Keyboard::V, Some(true)),
+        'B' => (Keyboard::B, Some(true)),
+        'N' => (Keyboard::N, Some(true)),
+        'M' => (Keyboard::M, Some(true)),
+        '<' => (Keyboard::Comma, Some(true)),
+        '>' => (Keyboard::Dot, Some(true)),
+        '?' => (Keyboard::ForwardSlash, Some(true)),
+
+        ' ' => (Keyboard::Space, None),
+        '\t' => (Keyboard::Tab, None),
+        '\n' => (Keyboard::ReturnEnter, None),
+
+        _ => (Keyboard::NoEventIndicated, None),
+    }
+}
+
 // return option consumer
 // shopu
 fn read_macro(
@@ -1133,19 +1240,36 @@ fn read_macro(
 
                 if macro_data[offset] != 0x00 {
                     if command_memeory.command_iteration == 0 {
-                        let key = Keyboard::from(macro_data[offset]);
+                        let (key, shift) = key_from_ascii(macro_data[offset] as char);
                         keys[macro_data[offset] as usize] = key;
+
+                        if let Some(shift) = shift {
+                            if shift {
+                                keys[0xE1] = Keyboard::LeftShift;
+                            } else {
+                                keys[0xE1] = Keyboard::NoEventIndicated;
+                            }
+                        }
                         
                         offset = temp_offset;
                         command_memeory.command_iteration = 1;
                     } else {
-                        let key = Keyboard::from(macro_data[offset]);
+                        let (key, _) = key_from_ascii(macro_data[offset] as char);
                         keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
+
                         command_memeory.command_offset += 1;
 
                         if macro_data[offset + 1] != macro_data[offset] {
-                            let key = Keyboard::from(macro_data[offset + 1]);
+                            let (key, shift) = key_from_ascii(macro_data[offset + 1] as char);
                             keys[macro_data[offset + 1] as usize] = key;
+
+                            if let Some(shift) = shift {
+                                if shift {
+                                    keys[0xE1] = Keyboard::LeftShift;
+                                } else {
+                                    keys[0xE1] = Keyboard::NoEventIndicated;
+                                }
+                            }
                         } else {
                             command_memeory.command_iteration = 0;
                         }
