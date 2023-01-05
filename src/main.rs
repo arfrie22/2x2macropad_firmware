@@ -311,8 +311,6 @@ struct Config {
     tap_speed: u32,
     #[packed_field(endian = "lsb")]
     hold_speed: u32,
-    #[packed_field(endian = "lsb")]
-    default_delay: u32,
 
     //...
     #[packed_field(element_size_bytes = "7")]
@@ -338,7 +336,6 @@ impl Default for Config {
             version: PROTOCOL_VERSION,
             tap_speed: MicrosDurationU32::millis(200).to_micros(),
             hold_speed: MicrosDurationU32::millis(200).to_micros(),
-            default_delay: MicrosDurationU32::millis(100).to_micros(),
             key_configs: [KeyConfig::default(); 4],
             led_config: LedConfig::default(),
         }
@@ -1174,13 +1171,13 @@ fn read_macro(
                     offset += 1;
                 }
             },
-            MacroCommand::CommandSetLed => {
+            MacroCommand::SetLed => {
                 let mut color_bytes = [0; 3];
                 color_bytes.copy_from_slice(&macro_data[offset..offset + 3]);
                 *backlight = Some(RGB8::from(color_bytes));
                 offset += 3;
             },
-            MacroCommand::CommandClearLed => {
+            MacroCommand::ClearLed => {
                 *backlight = None;
             },
             MacroCommand::KeyDown => {
@@ -1525,9 +1522,6 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                 ConfigElements::HoldSpeed => {
                     output[2..6].copy_from_slice(&config.hold_speed.to_le_bytes());
                 }
-                ConfigElements::DefaultDelay => {
-                    output[2..6].copy_from_slice(&config.default_delay.to_le_bytes());
-                }
                 ConfigElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = ConfigElements::Error as u8;
@@ -1557,16 +1551,6 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                     let new_hold_speed = u32::from_le_bytes(output[2..6].try_into().unwrap());
                     if new_hold_speed > 0 {
                         config.hold_speed = new_hold_speed;
-                        config.write()
-                    } else {
-                        output[0] = DataCommand::Error as u8;
-                        output[1] = ConfigElements::Error as u8;
-                    }
-                }
-                ConfigElements::DefaultDelay => {
-                    let new_default_delay = u32::from_le_bytes(output[2..6].try_into().unwrap());
-                    if new_default_delay > 0 {
-                        config.default_delay = new_default_delay;
                         config.write()
                     } else {
                         output[0] = DataCommand::Error as u8;
