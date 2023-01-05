@@ -631,10 +631,16 @@ fn main() -> ! {
     let mut macro_backlight = None;
 
     let mut keys = [Keyboard::NoEventIndicated; 260];
+    let mut macro_keys = [Keyboard::NoEventIndicated; 256];
 
     let mut key_change = false;
     let mut consumer_change = false;
     let mut consumers = [Consumer::Unassigned; 4];
+
+    let mut loop_states = [LoopState::default(); 256];
+    let mut current_loop_index = 0;
+    let mut command_memory = CommandState::default();
+
 
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
@@ -643,13 +649,15 @@ fn main() -> ! {
 
         if !key_change && !consumer_change && macro_delay.wait().is_ok() {
             if let Some(c_macro) = current_macro {
-                let (new_offset, delay, is_done) = read_macro(
+                let (new_offset, delay, out_consumer, is_done) = read_macro(
                     current_offset,
                     c_macro,
                     &config,
                     &mut macro_backlight,
-                    &mut keys,
-                    &mut consumers[current_macro_index],
+                    &mut macro_keys,
+                    &mut loop_states,
+                    &mut current_loop_index,
+                    &mut command_memory,
                 );
 
                 if is_done {
@@ -960,99 +968,303 @@ fn get_key_states(
     key_states
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+struct LoopState {
+    loop_offset: usize,
+    loop_iteration: u8,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+struct CommandState {
+    command_offset: usize,
+    command_iteration: u8,
+}
+
+// return option consumer
+// shopu
 fn read_macro(
     current_offset: usize,
     current_macro: &FlashBlock,
     config: &Config,
     backlight: &mut Option<RGB8>,
-    keys: &mut [Keyboard; 260],
-    consumer: &mut Consumer,
-) -> (usize, Option<MicrosDurationU32>, bool) {
-    let mut consumers = ArrayVec::<Consumer, 4>::new();
+    keys: &mut [Keyboard; 256],
+    loop_states: &mut [LoopState; 256],
+    current_loop_index: &mut usize,
+    command_memeory: &mut CommandState,
+    
+
+    // New offset, delay, consumer, is done
+) -> (usize, MicrosDurationU32, Option<Consumer>, bool) {
     let mut offset = current_offset;
-    let mut delay = None;
+    let mut delay_bytes = [0; 4];
+    let mut delay = 0;
     let mut is_done = false;
+    let mut return_consumer = None;
 
     let macro_data = current_macro.read();
 
-    let mut current_macro =
-        MacroCommand::from(macro_data[offset]);
-    if current_macro == MacroCommand::CommandTerminator {
-        is_done = true;
-        offset = 0;
-        *keys = [Keyboard::NoEventIndicated; 260];
-        *backlight = None;
-    }
+    let mut current_command = MacroCommand::from(macro_data[offset] >> 2);
+    let mut delay_count = macro_data[offset] & 0b11;
+    
 
-    while current_macro != MacroCommand::CommandTerminator {
+    
+
+    while delay == 0 {
+
         offset += 1;
-        match current_macro {
-            MacroCommand::CommandTerminator => {
-                break;
-            }
-            MacroCommand::CommandSectionAnnotation => {
-                // Not used by keyboard, used by configurator for macro reconstruction
-                offset += 1;
-            }
-            MacroCommand::CommandDelay => {
-                let delay_bytes = macro_data[offset..offset + 4].try_into().unwrap();
-                delay = Some(MicrosDurationU32::micros(u32::from_le_bytes(delay_bytes)));
-                offset += 4;
-            }
-            MacroCommand::CommandPressKey => {
-                let key = macro_data[offset];
+        if delay_count > 0 {
+            delay_bytes = [0; 4];
+            delay_bytes[1..=delay_count as usize].copy_from_slice(&macro_data[offset..offset + delay_count as usize]);
+            delay = u32::from_le_bytes(delay_bytes);
+            offset += delay_count as usize;
+        }
 
-                let key_value = Keyboard::from(key);
-
-                if key_value != Keyboard::NoEventIndicated {
-                    keys[key as usize] = key_value;
+        match current_command {
+            MacroCommand::Empty => {
+                if delay == 0 {
+                    is_done = true;
+                    offset = 0;
+                    *keys = [Keyboard::NoEventIndicated; 256];
+                    *backlight = None;
+                    *loop_states = [LoopState::default(); 256];
+                    *current_loop_index = 0;
+                    *command_memeory = CommandState::default();
+            
+                    return (offset, MicrosDurationU32::micros(delay), None, is_done);
                 }
-
-                offset += 1;
             }
-            MacroCommand::CommandReleaseKey => {
-                let key = macro_data[offset];
-                keys[key as usize] = Keyboard::NoEventIndicated;
-
-                offset += 1;
-            }
-            MacroCommand::CommandConsumer => {
-                let consumer_value =
-                    u16::from_le_bytes(macro_data[offset..offset + 2].try_into().unwrap());
-
-                let consumer_key = Consumer::from(consumer_value);
-
-                if consumer_key != Consumer::Unassigned {
-                    *consumer = consumer_key;
+            MacroCommand::LoopBegin => {
+                if *current_loop_index == 0 {
+                    *current_loop_index += 1;
+                    loop_states[*current_loop_index - 1].loop_offset = offset - 1 - delay_count as usize;
+                    loop_states[*current_loop_index - 1].loop_iteration = 1;
+                    delay = 0;
+                } else if loop_states[*current_loop_index - 1].loop_offset == offset - 1 - delay_count as usize {
+                    loop_states[*current_loop_index - 1].loop_iteration += 1;
+                } else {
+                    *current_loop_index += 1;
+                    loop_states[*current_loop_index - 1].loop_offset = offset - 1 - delay_count as usize;
+                    loop_states[*current_loop_index - 1].loop_iteration = 1;
+                    delay = 0;
                 }
+            },
+            MacroCommand::LoopEnd => {
+                let loop_count = macro_data[offset];
 
-                offset += 2;
-            }
-            MacroCommand::CommandReleaseConsumer => {
-                *consumer = Consumer::Unassigned;
-            }
+                if loop_states[*current_loop_index - 1].loop_iteration < loop_count {
+                    offset = loop_states[*current_loop_index - 1].loop_offset;
+                } else {
+                    loop_states[*current_loop_index - 1] = LoopState::default();
+
+                    *current_loop_index -= 1;
+                    offset += 1;
+                }
+            },
             MacroCommand::CommandSetLed => {
-                let color = (
-                    macro_data[offset],
-                    macro_data[offset + 1],
-                    macro_data[offset + 2],
-                )
-                    .into();
-                *backlight = Some(color);
-
+                let mut color_bytes = [0; 3];
+                color_bytes.copy_from_slice(&macro_data[offset..offset + 3]);
+                *backlight = Some(RGB8::from(color_bytes));
                 offset += 3;
-            }
+            },
             MacroCommand::CommandClearLed => {
                 *backlight = None;
-            }
-        };
-        current_macro =
-            MacroCommand::from(macro_data[offset]);
+            },
+            MacroCommand::KeyDown => {
+                let key = Keyboard::from(macro_data[offset]);
+                keys[macro_data[offset] as usize] = key;
+                offset += 1;
+            },
+            MacroCommand::KeyUp => {
+                let key = Keyboard::from(macro_data[offset]);
+                keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
+                offset += 1;
+            },
+            MacroCommand::KeyPress => {
+                let key = Keyboard::from(macro_data[offset]);
+                if command_memeory.command_iteration == 0 {
+                    keys[macro_data[offset] as usize] = key;
+                    delay_bytes = [0; 4];
+                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 1..=offset + 4]);
+                    delay = u32::from_le_bytes(delay_bytes);
+
+                    
+                    offset -= 1 + delay_count as usize;
+                    command_memeory.command_iteration = 1;
+                } else {
+                    keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
+                    *command_memeory = CommandState::default();
+                    offset += 4;
+                }
+            },
+            MacroCommand::ConsumerPress => {
+                let consumer = Consumer::from(u16::from_le_bytes([macro_data[offset], macro_data[offset + 1]]));
+                if command_memeory.command_iteration == 0 {
+                    return_consumer = Some(consumer);
+                    delay_bytes = [0; 4];
+                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 2..=offset + 5]);
+                    delay = u32::from_le_bytes(delay_bytes);
+
+                    
+                    offset -= 1 + delay_count as usize;
+                    command_memeory.command_iteration = 1;
+                } else {
+                    return_consumer = Some(Consumer::Unassigned);
+                    *command_memeory = CommandState::default();
+                    offset += 5;
+                }
+            },
+            MacroCommand::TypeString => {
+                let temp_offset = offset - 1 - delay_count as usize;
+                let temp_delay = delay;
+                
+                delay_bytes = [0; 4];
+                delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..=offset + 3]);
+                delay = u32::from_le_bytes(delay_bytes);
+                offset += 3;
+
+                offset += command_memeory.command_offset;
+
+                if macro_data[offset] != 0x00 {
+                    if command_memeory.command_iteration == 0 {
+                        let key = Keyboard::from(macro_data[offset]);
+                        keys[macro_data[offset] as usize] = key;
+                        
+                        offset = temp_offset;
+                        command_memeory.command_iteration = 1;
+                    } else {
+                        let key = Keyboard::from(macro_data[offset]);
+                        keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
+                        command_memeory.command_offset += 1;
+
+                        if macro_data[offset + 1] != macro_data[offset] {
+                            let key = Keyboard::from(macro_data[offset + 1]);
+                            keys[macro_data[offset + 1] as usize] = key;
+                        } else {
+                            command_memeory.command_iteration = 0;
+                        }
+                        
+                        offset = temp_offset;
+                        
+                    }
+                } else {
+                    *command_memeory = CommandState::default();
+                    offset += 1;
+                }
+            },
+            MacroCommand::Chord => {
+                let temp_offset = offset - 1 - delay_count as usize;
+
+                if command_memeory.command_iteration == 0 {
+                    delay_bytes = [0; 4];
+                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..=offset + 3]);
+                    delay = u32::from_le_bytes(delay_bytes);
+                    offset += 3;
+
+                    while macro_data[offset] != 0x00 {
+                        let key = Keyboard::from(macro_data[offset]);
+                        keys[macro_data[offset] as usize] = key;
+                        offset += 1;
+                    }
+
+                    
+                    offset = temp_offset;
+                    command_memeory.command_iteration = 1;
+                } else {
+                    offset += 3;
+
+                    while macro_data[offset] != 0x00 {
+                        let key = Keyboard::from(macro_data[offset]);
+                        keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
+                        offset += 1;
+                    }
+
+                    *command_memeory = CommandState::default();
+                }
+            },
+        }
     }
 
-    offset += 1;
 
-    (offset, delay, is_done)
+
+    (offset, MicrosDurationU32::micros(delay), None, false)
+    // let mut current_macro =
+    //     MacroCommand::from(macro_data[offset]);
+    // if current_macro == MacroCommand::CommandTerminator {
+    //     is_done = true;
+    //     offset = 0;
+    //     *keys = [Keyboard::NoEventIndicated; 260];
+    //     *backlight = None;
+    // }
+
+    // while current_macro != MacroCommand::CommandTerminator {
+    //     offset += 1;
+    //     match current_macro {
+    //         MacroCommand::CommandTerminator => {
+    //             break;
+    //         }
+    //         MacroCommand::CommandSectionAnnotation => {
+    //             // Not used by keyboard, used by configurator for macro reconstruction
+    //             offset += 1;
+    //         }
+    //         MacroCommand::CommandDelay => {
+    //             let delay_bytes = macro_data[offset..offset + 4].try_into().unwrap();
+    //             delay = Some(MicrosDurationU32::micros(u32::from_le_bytes(delay_bytes)));
+    //             offset += 4;
+    //         }
+    //         MacroCommand::CommandPressKey => {
+    //             let key = macro_data[offset];
+
+    //             let key_value = Keyboard::from(key);
+
+    //             if key_value != Keyboard::NoEventIndicated {
+    //                 keys[key as usize] = key_value;
+    //             }
+
+    //             offset += 1;
+    //         }
+    //         MacroCommand::CommandReleaseKey => {
+    //             let key = macro_data[offset];
+    //             keys[key as usize] = Keyboard::NoEventIndicated;
+
+    //             offset += 1;
+    //         }
+    //         MacroCommand::CommandConsumer => {
+    //             let consumer_value =
+    //                 u16::from_le_bytes(macro_data[offset..offset + 2].try_into().unwrap());
+
+    //             let consumer_key = Consumer::from(consumer_value);
+
+    //             if consumer_key != Consumer::Unassigned {
+    //                 *consumer = consumer_key;
+    //             }
+
+    //             offset += 2;
+    //         }
+    //         MacroCommand::CommandReleaseConsumer => {
+    //             *consumer = Consumer::Unassigned;
+    //         }
+    //         MacroCommand::CommandSetLed => {
+    //             let color = (
+    //                 macro_data[offset],
+    //                 macro_data[offset + 1],
+    //                 macro_data[offset + 2],
+    //             )
+    //                 .into();
+    //             *backlight = Some(color);
+
+    //             offset += 3;
+    //         }
+    //         MacroCommand::CommandClearLed => {
+    //             *backlight = None;
+    //         }
+    //     };
+    //     current_macro =
+    //         MacroCommand::from(macro_data[offset]);
+    // }
+
+    // offset += 1;
+
+    // (offset, delay, is_done)
 }
 
 fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer) -> GenericInOutMsg {
