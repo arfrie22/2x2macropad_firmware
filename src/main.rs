@@ -1117,16 +1117,15 @@ fn read_macro(
 
     while delay == 0 {
         let current_command = MacroCommand::from(macro_data[offset] >> 2);
-        let delay_count = macro_data[offset] & 0b11;
+        let delay_count = (macro_data[offset] & 0b11) + 1;
 
         info!("Command: {:?}, delay: {}", current_command as u8, delay_count);
         offset += 1;
-        if delay_count > 0 {
-            delay_bytes = [0; 4];
-            delay_bytes[1..=delay_count as usize].copy_from_slice(&macro_data[offset..offset + delay_count as usize]);
-            delay = u32::from_le_bytes(delay_bytes);
-            offset += delay_count as usize;
-        }
+        
+        delay_bytes = [0; 4];
+        delay_bytes[0..delay_count as usize].copy_from_slice(&macro_data[offset..offset + delay_count as usize]);
+        delay = u32::from_le_bytes(delay_bytes);
+        offset += delay_count as usize;
 
         match current_command {
             MacroCommand::Empty => {
@@ -1191,8 +1190,7 @@ fn read_macro(
                 let key = Keyboard::from(macro_data[offset]);
                 if command_memeory.command_iteration == 0 {
                     keys[macro_data[offset] as usize] = key;
-                    delay_bytes = [0; 4];
-                    delay_bytes[1..4].copy_from_slice(&macro_data[offset + 1..offset + 4]);
+                    delay_bytes[0..4].copy_from_slice(&macro_data[offset + 1..offset + 5]);
                     delay = u32::from_le_bytes(delay_bytes);
 
                     
@@ -1209,8 +1207,7 @@ fn read_macro(
                 let consumer = Consumer::from(u16::from_le_bytes([macro_data[offset], macro_data[offset + 1]]));
                 if command_memeory.command_iteration == 0 {
                     return_consumer = Some(consumer);
-                    delay_bytes = [0; 4];
-                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 2..offset + 5]);
+                    delay_bytes[0..4].copy_from_slice(&macro_data[offset + 2..offset + 6]);
                     delay = u32::from_le_bytes(delay_bytes);
 
                     
@@ -1226,10 +1223,9 @@ fn read_macro(
                 let temp_offset = offset - 1 - delay_count as usize;
                 let temp_delay = delay;
                 
-                delay_bytes = [0; 4];
-                delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..offset + 3]);
+                delay_bytes[0..4].copy_from_slice(&macro_data[offset..offset + 4]);
                 delay = u32::from_le_bytes(delay_bytes);
-                offset += 3;
+                offset += 4;
 
                 offset += command_memeory.command_offset;
 
@@ -1274,6 +1270,7 @@ fn read_macro(
                     }
                 } else {
                     *command_memeory = CommandState::default();
+                    delay = temp_delay;
                     offset += 1;
                 }
             },
@@ -1281,10 +1278,9 @@ fn read_macro(
                 let temp_offset = offset - 1 - delay_count as usize;
 
                 if command_memeory.command_iteration == 0 {
-                    delay_bytes = [0; 4];
-                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..offset + 3]);
+                    delay_bytes[0..4].copy_from_slice(&macro_data[offset..offset + 4]);
                     delay = u32::from_le_bytes(delay_bytes);
-                    offset += 3;
+                    offset += 4;
 
                     while macro_data[offset] != 0x00 {
                         let key = Keyboard::from(macro_data[offset]);
@@ -1299,7 +1295,6 @@ fn read_macro(
                     offset += 3;
 
                     while macro_data[offset] != 0x00 {
-                        let key = Keyboard::from(macro_data[offset]);
                         keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
                         offset += 1;
                     }
