@@ -649,7 +649,6 @@ fn main() -> ! {
                 let (new_offset, delay, out_consumer, is_done) = read_macro(
                     current_offset,
                     c_macro,
-                    &config,
                     &mut macro_backlight,
                     &mut macro_keys,
                     &mut loop_states,
@@ -772,7 +771,7 @@ fn main() -> ! {
                 }
             };
 
-            info!("Wrote keyboard report, keychange: {}", key_change);
+            // info!("Wrote keyboard report, keychange: {}", key_change);
         }
 
         if consumer_input_timer.wait().is_ok() {
@@ -1096,7 +1095,6 @@ fn key_from_ascii (char: char) -> (Keyboard, Option<bool>) {
 fn read_macro(
     current_offset: usize,
     current_macro: &FlashBlock,
-    config: &Config,
     backlight: &mut Option<RGB8>,
     keys: &mut [Keyboard; 256],
     loop_states: &mut [LoopState; 256],
@@ -1113,15 +1111,15 @@ fn read_macro(
     let mut return_consumer = None;
 
     let macro_data = current_macro.read();
-
-    let mut current_command = MacroCommand::from(macro_data[offset] >> 2);
-    let mut delay_count = macro_data[offset] & 0b11;
     
 
     
 
     while delay == 0 {
+        let current_command = MacroCommand::from(macro_data[offset] >> 2);
+        let delay_count = macro_data[offset] & 0b11;
 
+        info!("Command: {:?}, delay: {}", current_command as u8, delay_count);
         offset += 1;
         if delay_count > 0 {
             delay_bytes = [0; 4];
@@ -1186,7 +1184,6 @@ fn read_macro(
                 offset += 1;
             },
             MacroCommand::KeyUp => {
-                let key = Keyboard::from(macro_data[offset]);
                 keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
                 offset += 1;
             },
@@ -1195,7 +1192,7 @@ fn read_macro(
                 if command_memeory.command_iteration == 0 {
                     keys[macro_data[offset] as usize] = key;
                     delay_bytes = [0; 4];
-                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 1..=offset + 4]);
+                    delay_bytes[1..4].copy_from_slice(&macro_data[offset + 1..offset + 4]);
                     delay = u32::from_le_bytes(delay_bytes);
 
                     
@@ -1208,11 +1205,12 @@ fn read_macro(
                 }
             },
             MacroCommand::ConsumerPress => {
+                // TODO: FIX
                 let consumer = Consumer::from(u16::from_le_bytes([macro_data[offset], macro_data[offset + 1]]));
                 if command_memeory.command_iteration == 0 {
                     return_consumer = Some(consumer);
                     delay_bytes = [0; 4];
-                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 2..=offset + 5]);
+                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset + 2..offset + 5]);
                     delay = u32::from_le_bytes(delay_bytes);
 
                     
@@ -1229,7 +1227,7 @@ fn read_macro(
                 let temp_delay = delay;
                 
                 delay_bytes = [0; 4];
-                delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..=offset + 3]);
+                delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..offset + 3]);
                 delay = u32::from_le_bytes(delay_bytes);
                 offset += 3;
 
@@ -1284,7 +1282,7 @@ fn read_macro(
 
                 if command_memeory.command_iteration == 0 {
                     delay_bytes = [0; 4];
-                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..=offset + 3]);
+                    delay_bytes[1..4 as usize].copy_from_slice(&macro_data[offset..offset + 3]);
                     delay = u32::from_le_bytes(delay_bytes);
                     offset += 3;
 
@@ -1314,7 +1312,7 @@ fn read_macro(
 
 
 
-    (offset, MicrosDurationU32::micros(delay), None, false)
+    (offset, MicrosDurationU32::micros(delay), return_consumer, false)
     // let mut current_macro =
     //     MacroCommand::from(macro_data[offset]);
     // if current_macro == MacroCommand::CommandTerminator {
