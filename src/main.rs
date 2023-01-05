@@ -672,15 +672,22 @@ fn main() -> ! {
                 }
 
                 current_offset = new_offset;
+                keys[0..256].copy_from_slice(&macro_keys);
+
+                if let Some(consumer) = out_consumer {
+                    consumers[current_macro_index] = consumer;
+                    consumer_change = true;
+                }
+                
                 macro_delay.start(
-                    delay.unwrap_or_else(|| MicrosDurationU32::micros(config.default_delay)),
+                    delay
                 );
 
                 key_change = true;
 
-                if consumers != last_consumer_report.codes {
-                    consumer_change = true;
-                }
+                // if consumers != last_consumer_report.codes {
+                //     consumer_change = true;
+                // }
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
