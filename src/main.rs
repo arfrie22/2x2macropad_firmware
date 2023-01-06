@@ -1119,7 +1119,7 @@ fn read_macro(
         let current_command = MacroCommand::from(macro_data[offset] >> 2);
         let delay_count = (macro_data[offset] & 0b11) + 1;
 
-        info!("Command: {:?}, delay: {}", current_command as u8, delay_count);
+        // info!("Command: {:?}, delay: {}", current_command as u8, delay_count);
         offset += 1;
         
         delay_bytes = [0; 4];
@@ -1199,7 +1199,7 @@ fn read_macro(
                 } else {
                     keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
                     *command_memeory = CommandState::default();
-                    offset += 4;
+                    offset += 5;
                 }
             },
             MacroCommand::ConsumerPress => {
@@ -1216,7 +1216,7 @@ fn read_macro(
                 } else {
                     return_consumer = Some(Consumer::Unassigned);
                     *command_memeory = CommandState::default();
-                    offset += 5;
+                    offset += 6;
                 }
             },
             MacroCommand::TypeString => {
