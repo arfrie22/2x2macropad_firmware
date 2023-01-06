@@ -24,6 +24,7 @@ jobs:
         rustup self update
         rustup update stable
         rustup target add thumbv6m-none-eabi
+        cargo install flip-link
 
     - name: Build
       run: cargo build --release

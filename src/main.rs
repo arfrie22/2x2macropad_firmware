@@ -1681,6 +1681,3 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
 
     GenericInOutMsg { packet: output }
 }
-
-
-// Force rerun of github action
