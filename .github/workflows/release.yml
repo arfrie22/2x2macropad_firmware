@@ -19,8 +19,14 @@ jobs:
     - name: Install Dependencies
       run: sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
+    - name: Setup Rust
+      run: |
+        rustup self update
+        rustup update stable
+        rustup target add thumbv6m-none-eabi
+
     - name: Build
-      run: cargo-build --release
+      run: cargo build --release
     
     - name: Install SDK
       uses: actions/checkout@v3
