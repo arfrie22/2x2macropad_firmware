@@ -37,9 +37,10 @@ jobs:
         submodules: true
 
     - name: Build elf2uf2
+      working-directory: ${{github.workspace}}/pico-sdk/tools/elf2uf2
       run: |
-        cmake -B ${{github.workspace}}/pico-sdk/tools/elf2uf2/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        cmake --build ${{github.workspace}}/pico-sdk/tools/elf2uf2/build --config ${{env.BUILD_TYPE}}
+        cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+        cmake --build build --config ${{env.BUILD_TYPE}}
     
     - name: Package binary
       run: ${{github.workspace}}/pico-sdk/tools/elf2uf2/build/elf2uf2 ${{github.workspace}}/target/thumbv6m-none-eabi/release/macropad_firmware ${{github.workspace}}/macropad_firmware.uf2
