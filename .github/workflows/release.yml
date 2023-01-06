@@ -1,0 +1,44 @@
+name: Build for release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    concurrency: ci-${{ github.ref }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Dependencies
+      run: sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+
+    - name: Build
+      run: cargo-build --release
+    
+    - name: Install SDK
+      uses: actions/checkout@v3
+      with:
+        repository: raspberrypi/pico-sdk
+        path: pico-sdk
+        submodules: true
+
+    - name: Build elf2uf2
+      run: |
+        cmake -B ${{github.workspace}}/pico-sdk/tools/elf2uf2/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+        cmake --build ${{github.workspace}}/pico-sdk/tools/elf2uf2/build --config ${{env.BUILD_TYPE}}
+    
+    - name: Package binary
+      run: ${{github.workspace}}/pico-sdk/tools/elf2uf2/build/elf2uf2 ${{github.workspace}}/target/thumbv6m-none-eabi/release/macropad_firmware ${{github.workspace}}/macropad_firmware.uf2
+    
+    - name: Add Firmware to Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: ${{github.workspace}}/macropad_firmware.uf2
