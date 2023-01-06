@@ -1305,8 +1305,6 @@ fn read_macro(
         }
     }
 
-
-
     (offset, MicrosDurationU32::micros(delay), return_consumer, false)
 }
 
