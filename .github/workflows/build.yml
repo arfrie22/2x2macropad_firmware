@@ -31,7 +31,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Build
-      run: cargo build --release
+      run: cargo build --debug
     
     - name: Install SDK
       uses: actions/checkout@v3
@@ -47,7 +47,7 @@ jobs:
         cmake --build build --config ${{env.BUILD_TYPE}}
     
     - name: Package binary
-      run: ${{github.workspace}}/pico-sdk/tools/elf2uf2/build/elf2uf2 ${{github.workspace}}/target/thumbv6m-none-eabi/release/macropad_firmware ${{github.workspace}}/macropad_firmware.uf2
+      run: ${{github.workspace}}/pico-sdk/tools/elf2uf2/build/elf2uf2 ${{github.workspace}}/target/thumbv6m-none-eabi/debug/macropad_firmware ${{github.workspace}}/macropad_firmware.uf2
     
     - name: Upload Firmware
       uses: actions/upload-artifact@v3
