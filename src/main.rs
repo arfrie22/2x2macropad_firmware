@@ -1264,6 +1264,7 @@ fn read_macro(
                     }
                 } else {
                     *command_memeory = CommandState::default();
+                    keys[0xE1] = Keyboard::NoEventIndicated;
                     delay = temp_delay;
                     offset += 1;
                 }
