@@ -2,7 +2,7 @@ use core::{mem, borrow::Borrow};
 
 use macropad_protocol::data_protocol::LedEffect;
 use num_enum::{IntoPrimitive, FromPrimitive};
-use rp2040_hal::Timer;
+use rp2040_hal::{Timer, timer::Instant};
 use smart_leds::RGB8;
 use packed_struct::prelude::*;
 use strum::EnumCount;
@@ -229,13 +229,12 @@ impl Default for LedConfig {
 
 impl LedConfig {
     pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN], timer: &Timer) {
-        // get_counter in micros
         if self.effect_period != 0.0 {
-            self.timer += (1.0/self.effect_period) * ((timer.get_counter() - self.prev_time) as f32 / 1000.0);
+            self.timer += (1.0/self.effect_period) * ((timer.get_counter().duration_since_epoch().to_millis() - self.prev_time) as f32);
 
-            self.prev_time = timer.get_counter();
+            self.prev_time = timer.get_counter().duration_since_epoch().to_millis();
 
-            self.timer = self.timer % 1000.0;
+            self.timer %= 1000.0;
 
             if self.timer < 0.0 {
                 self.timer += 1000.0;
@@ -247,6 +246,6 @@ impl LedConfig {
 
     pub fn reset_timer(&mut self, timer: &Timer) {
         self.timer = 0.0;
-        self.prev_time = timer.get_counter();
+        self.prev_time = timer.get_counter().duration_since_epoch().to_millis();
     }
 }

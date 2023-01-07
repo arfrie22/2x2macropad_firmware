@@ -15,20 +15,20 @@ packed_struct = { version = "0.10", default-features = false }
 frunk = { version = "0.4", default-features = false }
 fugit = "0.3"
 
-cortex-m = "0.7.5"
-cortex-m-rt = "0.7.1"
+cortex-m = { version = "0.7.7"}
+cortex-m-rt = "0.7.2"
 embedded-hal = { version = "0.2.7", features = ["unproven"] }
 embedded-time = "0.12.1"
 
-defmt = "0.3.2"
-defmt-rtt = "0.4.0"
+defmt = "0.3"
+defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 
-rp2040-hal = {version = "0.6.0", features=["rt"]}
+rp2040-hal = {version = "0.7.0", features=["rt", "critical-section-impl"]}
 rp2040-pac = {version = "0.4.0", features=["rt"]}
 
 smart-leds = "0.3.0"
-ws2812-pio = "0.4.0"
+ws2812-pio = "0.5.0"
 
 arrayvec = { version = "0.7.2", default-features = false }
 

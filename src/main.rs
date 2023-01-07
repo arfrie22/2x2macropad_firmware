@@ -680,6 +680,7 @@ fn main() -> ! {
                 );
 
                 key_change = true;
+
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
