@@ -19,7 +19,7 @@ use macropad_protocol::data_protocol::KeyConfigElements;
 use macropad_protocol::data_protocol::KeyMode;
 use macropad_protocol::data_protocol::LedCommand;
 
-use embedded_time::duration::Milliseconds;
+
 use hal::timer::CountDown;
 use led_effect::LedConfig;
 use led_effect::STRIP_LEN;
@@ -32,9 +32,6 @@ pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 use core::cell::UnsafeCell;
 use core::convert::Infallible;
 use core::default::Default;
-use core::mem;
-
-use arrayvec::ArrayVec;
 
 use hal::rom_data::reset_to_usb_boot;
 use macropad_protocol::data_protocol::{DataCommand, PROTOCOL_VERSION};
@@ -46,7 +43,6 @@ use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::*;
 
-use strum::EnumCount;
 
 use fugit::{ExtU32, MicrosDurationU32};
 use hal::entry;
@@ -222,7 +218,8 @@ impl KeyMacro {
         }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
-
+    
+    #[allow(dead_code)]
     fn clear_flash(&self, t: &MacroType) {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         match t {
@@ -565,6 +562,7 @@ fn main() -> ! {
 
     // Import the `sin` function for a smooth hue animation from the
     // Pico rp2040 ROM:
+    #[allow(unused_variables)]
     let sin = hal::rom_data::float_funcs::fsin::ptr();
 
     // Split the PIO state machine 0 into individual objects, so that
@@ -1102,7 +1100,7 @@ fn read_macro(
     // New offset, delay, consumer, is done
 ) -> (usize, MicrosDurationU32, Option<Consumer>, bool) {
     let mut offset = current_offset;
-    let mut delay_bytes = [0; 4];
+    let mut delay_bytes;
     let mut delay = 0;
     let mut is_done = false;
     let mut return_consumer = None;
@@ -1242,7 +1240,6 @@ fn read_macro(
                         offset = temp_offset;
                         command_memeory.command_iteration = 1;
                     } else {
-                        let (key, _) = key_from_ascii(macro_data[offset] as char);
                         keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
 
                         command_memeory.command_offset += 1;
@@ -1302,7 +1299,7 @@ fn read_macro(
         }
     }
 
-    (offset, MicrosDurationU32::micros(delay), return_consumer, false)
+    (offset, MicrosDurationU32::micros(delay), return_consumer, is_done)
 }
 
 fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer) -> GenericInOutMsg {

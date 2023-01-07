@@ -1,11 +1,11 @@
-use core::{mem, borrow::Borrow};
+
 
 use macropad_protocol::data_protocol::LedEffect;
-use num_enum::{IntoPrimitive, FromPrimitive};
-use rp2040_hal::{Timer, timer::Instant};
+
+use rp2040_hal::Timer;
 use smart_leds::RGB8;
 use packed_struct::prelude::*;
-use strum::EnumCount;
+
 
 pub fn apply(
     backlight: &mut [RGB8; STRIP_LEN],
@@ -43,7 +43,7 @@ pub const STRIP_LEN: usize = 4;
 
 pub fn effect_none(
     backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
+    _led_config: &mut LedConfig,
 ) {
     *backlight = [RGB8::default(); STRIP_LEN];
 }

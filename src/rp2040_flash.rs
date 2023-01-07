@@ -1,4 +1,4 @@
-#![no_std]
+// #![no_std]
 pub mod flash {
     use core::marker::PhantomData;
     use rp2040_hal::rom_data;
