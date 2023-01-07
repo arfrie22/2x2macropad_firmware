@@ -3,8 +3,16 @@ name: Compile debug build
 on:
   push:
     branches: [ main ]
+    paths:
+      - '**.rs'
+      - '**.toml'
+      - '**.lock'
   pull_request:
     branches: [ main ]
+    paths:
+      - '**.rs'
+      - '**.toml'
+      - '**.lock'
 
 env:
   BUILD_TYPE: Debug
