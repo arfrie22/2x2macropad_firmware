@@ -680,10 +680,6 @@ fn main() -> ! {
                 );
 
                 key_change = true;
-
-                // if consumers != last_consumer_report.codes {
-                //     consumer_change = true;
-                // }
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
