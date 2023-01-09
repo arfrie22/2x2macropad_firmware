@@ -1665,6 +1665,30 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
             }
         }
 
+        DataCommand::GetBuildInfo => {
+            // let build_info_command = BuildInfoElements::from(output[1]);
+
+            // match build_info_command {
+            //     BuildInfoElements::Version => {
+            //         output[2..6].copy_from_slice(&VERSION.to_le_bytes());
+            //     }
+
+            //     BuildInfoElements::BuildDate => {
+            //         output[2..6].copy_from_slice(&BUILD_DATE.to_le_bytes());
+            //     }
+
+            //     BuildInfoElements::BuildTime => {
+            //         output[2..6].copy_from_slice(&BUILD_TIME.to_le_bytes());
+            //     }
+
+            //     BuildInfoElements::Error => {
+            //         output[0] = DataCommand::Error as u8;
+            //         output[1] = BuildInfoElements::Error as u8;
+            //     }
+            // }
+            // TODO
+        }
+
         DataCommand::EnterBootloader => {
             reset_to_usb_boot(0, 0);
         }
