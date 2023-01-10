@@ -12,7 +12,6 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
 
 use vergen::EmitBuilder;
 
@@ -43,25 +42,4 @@ fn main() {
 
     let build_type = std::env::var("PROFILE").unwrap();
     println!("cargo:rustc-env=BUILD_PROFILE={}", build_type);
-
-    // note: add error checking yourself.
-    // let output = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
-    // let git_hash = String::from_utf8(output.stdout).unwrap();
-    // println!("cargo:rustc-env=GIT_HASH={}", git_hash);
-
-    // let output = Command::new("git").args(["describe", "--tags"]).output().unwrap();
-    // let git_semver = String::from_utf8(output.stdout).unwrap();
-    // println!("cargo:rustc-env=GIT_SEMVER={}", git_semver);
-
-    // let output = Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]).output().unwrap();
-    // let git_branch = String::from_utf8(output.stdout).unwrap();
-    // println!("cargo:rustc-env=GIT_BRANCH={}", git_branch);
-
-    
-    
-
-    // let output = Command::new("git").args(["describe", "--tags"]).output().unwrap();
-    // let git_hash = String::from_utf8(output.stdout).unwrap();
-    // println!("cargo:rustc-env=GIT_SEMVER={}", git_hash);
-    
 }
