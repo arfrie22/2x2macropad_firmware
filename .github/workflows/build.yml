@@ -41,7 +41,9 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Build
-      run: RUST_LOG=trace RUST_BACKTRACE=1 cargo build -vv
+      run: |
+        git config --global --add safe.directory ${{github.workspace}}
+        RUST_LOG=trace RUST_BACKTRACE=1 cargo build -vv
     
     - name: Install SDK
       uses: actions/checkout@v3
