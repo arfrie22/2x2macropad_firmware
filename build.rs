@@ -14,6 +14,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
+use vergen::EmitBuilder;
+
 fn main() {
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
@@ -30,13 +32,36 @@ fn main() {
     // `memory.x` is changed.
     println!("cargo:rerun-if-changed=memory.x");
 
-    // note: add error checking yourself.
-    let output = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
-    let git_hash = String::from_utf8(output.stdout).unwrap();
-    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+    EmitBuilder::builder()
+    .build_date()
+    .build_timestamp()
+    .git_sha(false)
+    .git_branch()
+    .git_describe(false, true)
+    .fail_on_error()
+    .emit().unwrap();
 
-    let output = Command::new("git").args(["describe", "--tags"]).output().unwrap();
-    let git_hash = String::from_utf8(output.stdout).unwrap();
-    println!("cargo:rustc-env=GIT_SEMVER={}", git_hash);
+    let build_type = std::env::var("PROFILE").unwrap();
+    println!("cargo:rustc-env=BUILD_PROFILE={}", build_type);
+
+    // note: add error checking yourself.
+    // let output = Command::new("git").args(["rev-parse", "HEAD"]).output().unwrap();
+    // let git_hash = String::from_utf8(output.stdout).unwrap();
+    // println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+
+    // let output = Command::new("git").args(["describe", "--tags"]).output().unwrap();
+    // let git_semver = String::from_utf8(output.stdout).unwrap();
+    // println!("cargo:rustc-env=GIT_SEMVER={}", git_semver);
+
+    // let output = Command::new("git").args(["rev-parse", "--abbrev-ref", "HEAD"]).output().unwrap();
+    // let git_branch = String::from_utf8(output.stdout).unwrap();
+    // println!("cargo:rustc-env=GIT_BRANCH={}", git_branch);
+
+    
+    
+
+    // let output = Command::new("git").args(["describe", "--tags"]).output().unwrap();
+    // let git_hash = String::from_utf8(output.stdout).unwrap();
+    // println!("cargo:rustc-env=GIT_SEMVER={}", git_hash);
     
 }

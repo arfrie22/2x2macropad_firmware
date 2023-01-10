@@ -5,6 +5,8 @@ edition = "2021"
 
 [workspace]
 
+[build-dependencies]
+vergen = { version = "8.0.0-beta.2", features = ["build", "cargo", "git", "git2"] }
 
 [dependencies]
 num_enum = { version = "0.5.7", default-features = false }

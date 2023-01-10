@@ -14,6 +14,7 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 use crc::{Crc, CRC_32_CKSUM};
+use macropad_protocol::data_protocol::BuildInfoElements;
 use macropad_protocol::data_protocol::ConfigElements;
 use macropad_protocol::data_protocol::KeyConfigElements;
 use macropad_protocol::data_protocol::KeyMode;
@@ -1666,27 +1667,49 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
         }
 
         DataCommand::GetBuildInfo => {
-            // let build_info_command = BuildInfoElements::from(output[1]);
+            let build_info_command = BuildInfoElements::from(output[1]);
 
-            // match build_info_command {
-            //     BuildInfoElements::Version => {
-            //         output[2..6].copy_from_slice(&VERSION.to_le_bytes());
-            //     }
-
-            //     BuildInfoElements::BuildDate => {
-            //         output[2..6].copy_from_slice(&BUILD_DATE.to_le_bytes());
-            //     }
-
-            //     BuildInfoElements::BuildTime => {
-            //         output[2..6].copy_from_slice(&BUILD_TIME.to_le_bytes());
-            //     }
-
-            //     BuildInfoElements::Error => {
-            //         output[0] = DataCommand::Error as u8;
-            //         output[1] = BuildInfoElements::Error as u8;
-            //     }
-            // }
-            // TODO
+            match build_info_command {
+                BuildInfoElements::Version => {
+                    const VERSION: &str = env!("CARGO_PKG_VERSION");
+                    output[2] = VERSION.len() as u8;
+                    output[3..VERSION.len() + 3].copy_from_slice(VERSION.as_bytes());
+                },
+                BuildInfoElements::BuildDate => {
+                    const DATE: &str = env!("VERGEN_BUILD_DATE");
+                    output[2] = DATE.len() as u8;
+                    output[3..DATE.len() + 3].copy_from_slice(DATE.as_bytes());
+                },
+                BuildInfoElements::BuildTime => {
+                    const TIME: &str = env!("VERGEN_BUILD_TIMESTAMP");
+                    output[2] = TIME.len() as u8;
+                    output[3..TIME.len() + 3].copy_from_slice(TIME.as_bytes());
+                },
+                BuildInfoElements::GitHash => {
+                    const HASH: &str = env!("VERGEN_GIT_SHA");
+                    output[2] = HASH.len() as u8;
+                    output[3..HASH.len() + 3].copy_from_slice(HASH.as_bytes());
+                },
+                BuildInfoElements::GitBranch => {
+                    const BRANCH: &str = env!("VERGEN_GIT_BRANCH");
+                    output[2] = BRANCH.len() as u8;
+                    output[3..BRANCH.len() + 3].copy_from_slice(BRANCH.as_bytes());
+                },
+                BuildInfoElements::BuildType => {
+                    const BUILD_TYPE: &str = env!("BUILD_PROFILE");
+                    output[2] = BUILD_TYPE.len() as u8;
+                    output[3..BUILD_TYPE.len() + 3].copy_from_slice(BUILD_TYPE.as_bytes());
+                },
+                BuildInfoElements::GitSemver => {
+                    const SEMVER: &str = env!("VERGEN_GIT_DESCRIBE");
+                    output[2] = SEMVER.len() as u8;
+                    output[3..SEMVER.len() + 3].copy_from_slice(SEMVER.as_bytes());
+                },
+                BuildInfoElements::Error => {
+                    output[0] = DataCommand::Error as u8;
+                    output[1] = BuildInfoElements::Error as u8;
+                },
+            }
         }
 
         DataCommand::EnterBootloader => {
