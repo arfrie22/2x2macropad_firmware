@@ -7,12 +7,14 @@ on:
       - '**.rs'
       - '**.toml'
       - '**.lock'
+      - '.github/workflows/build.yml'
   pull_request:
     branches: [ main ]
     paths:
       - '**.rs'
       - '**.toml'
       - '**.lock'
+      - '.github/workflows/build.yml'
 
 env:
   BUILD_TYPE: Debug
