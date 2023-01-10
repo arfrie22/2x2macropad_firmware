@@ -36,7 +36,7 @@ fn main() {
     .build_timestamp()
     .git_sha(false)
     .git_branch()
-    .git_describe(false, true)
+    .git_describe(true, true)
     .fail_on_error()
     .emit().unwrap();
 
