@@ -26,6 +26,7 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+      fetch-depth: '0'
 
     - name: Install Dependencies
       run: sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
@@ -41,9 +42,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Build
-      run: |
-        git config --global --add safe.directory ${{github.workspace}}
-        RUST_LOG=trace RUST_BACKTRACE=1 cargo build -vv
+      run: RUST_LOG=trace RUST_BACKTRACE=1 cargo build -vv
     
     - name: Install SDK
       uses: actions/checkout@v3
