@@ -1670,7 +1670,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
             let build_info_command = BuildInfoElements::from(output[1]);
 
             match build_info_command {
-                BuildInfoElements::Version => {
+                BuildInfoElements::FirmwareVersion => {
                     const VERSION: &str = env!("CARGO_PKG_VERSION");
                     output[2] = VERSION.len() as u8;
                     output[3..VERSION.len() + 3].copy_from_slice(VERSION.as_bytes());
@@ -1680,10 +1680,15 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                     output[2] = DATE.len() as u8;
                     output[3..DATE.len() + 3].copy_from_slice(DATE.as_bytes());
                 },
-                BuildInfoElements::BuildTime => {
+                BuildInfoElements::BuildTimestamp => {
                     const TIME: &str = env!("VERGEN_BUILD_TIMESTAMP");
                     output[2] = TIME.len() as u8;
                     output[3..TIME.len() + 3].copy_from_slice(TIME.as_bytes());
+                },
+                BuildInfoElements::BuildProfile => {
+                    const BUILD_TYPE: &str = env!("BUILD_PROFILE");
+                    output[2] = BUILD_TYPE.len() as u8;
+                    output[3..BUILD_TYPE.len() + 3].copy_from_slice(BUILD_TYPE.as_bytes());
                 },
                 BuildInfoElements::GitHash => {
                     const HASH: &str = env!("VERGEN_GIT_SHA");
@@ -1694,11 +1699,6 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                     const BRANCH: &str = env!("VERGEN_GIT_BRANCH");
                     output[2] = BRANCH.len() as u8;
                     output[3..BRANCH.len() + 3].copy_from_slice(BRANCH.as_bytes());
-                },
-                BuildInfoElements::BuildType => {
-                    const BUILD_TYPE: &str = env!("BUILD_PROFILE");
-                    output[2] = BUILD_TYPE.len() as u8;
-                    output[3..BUILD_TYPE.len() + 3].copy_from_slice(BUILD_TYPE.as_bytes());
                 },
                 BuildInfoElements::GitSemver => {
                     const SEMVER: &str = env!("VERGEN_GIT_DESCRIBE");
