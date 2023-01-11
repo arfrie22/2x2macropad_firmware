@@ -516,10 +516,10 @@ fn main() -> ! {
         .build(usb_alloc);
 
     //https://pid.codes
-    let mut usb_dev = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0001))
-        .manufacturer("usbd-human-interface-device")
-        .product("Keyboard & Consumer & RawHid")
-        .serial_number("TEST")
+    let mut usb_dev = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x554D, 0x2020))
+        .manufacturer("UMass Amherst All-Campus Makerspace")
+        .product("2x2 Macropad")
+        .serial_number("MACROPAD")
         .build();
 
     let row_pins: &[&dyn InputPin<Error = core::convert::Infallible>] = &[
@@ -561,19 +561,9 @@ fn main() -> ! {
     // Setup a delay for the LED blink signals:
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
 
-    // Import the `sin` function for a smooth hue animation from the
-    // Pico rp2040 ROM:
-    #[allow(unused_variables)]
-    let sin = hal::rom_data::float_funcs::fsin::ptr();
-
-    // Split the PIO state machine 0 into individual objects, so that
-    // Ws2812 can use it:
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
 
-    // Instanciate a Ws2812 LED strip:
     let mut ws = Ws2812::new(
-        // Use pin 6 on the Raspberry Pi Pico (which is GPIO4 of the rp2040 chip)
-        // for the LED data output:
         pins.gpio0.into_mode(),
         &mut pio,
         sm0,
