@@ -1,74 +1,38 @@
-
-
 use macropad_protocol::data_protocol::LedEffect;
 
+use packed_struct::prelude::*;
 use rp2040_hal::Timer;
 use smart_leds::RGB8;
-use packed_struct::prelude::*;
 
-
-pub fn apply(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
+pub fn apply(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
     match led_config.effect {
-        LedEffect::None => effect_none(
-            backlight,
-            led_config
-        ),
-        LedEffect::Static => effect_static(
-            backlight,
-            led_config
-        ),
-        LedEffect::Breathing => effect_breathing(
-            backlight,
-            led_config
-        ),
-        LedEffect::BreathingSpaced => effect_breathing_spaced(
-            backlight,
-            led_config
-        ),
-        LedEffect::ColorCycle => effect_color_cycle(
-            backlight,
-            led_config
-        ),
-        LedEffect::Rainbow => effect_rainbow(
-            backlight,
-            led_config
-        ),
+        LedEffect::None => effect_none(backlight, led_config),
+        LedEffect::Static => effect_static(backlight, led_config),
+        LedEffect::Breathing => effect_breathing(backlight, led_config),
+        LedEffect::BreathingSpaced => effect_breathing_spaced(backlight, led_config),
+        LedEffect::ColorCycle => effect_color_cycle(backlight, led_config),
+        LedEffect::Rainbow => effect_rainbow(backlight, led_config),
     };
 }
 
 pub const STRIP_LEN: usize = 4;
 
-pub fn effect_none(
-    backlight: &mut [RGB8; STRIP_LEN],
-    _led_config: &mut LedConfig,
-) {
+pub fn effect_none(backlight: &mut [RGB8; STRIP_LEN], _led_config: &mut LedConfig) {
     *backlight = [RGB8::default(); STRIP_LEN];
 }
 
-pub fn effect_static(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
-    *backlight = [
-        RGB8 {
-            r: led_config.base_color.r,
-            g: led_config.base_color.g,
-            b: led_config.base_color.b,
-        };
-        STRIP_LEN
-    ];
+pub fn effect_static(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
+    *backlight = [RGB8 {
+        r: led_config.base_color.r,
+        g: led_config.base_color.g,
+        b: led_config.base_color.b,
+    }; STRIP_LEN];
 }
 
-pub fn effect_breathing(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
+pub fn effect_breathing(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
     let mut color = led_config.base_color;
 
-    let mut time = led_config.timer * (100.0/1000.0);
+    let mut time = led_config.timer * (100.0 / 1000.0);
 
     if time > 50.0 {
         time = 100.0 - time;
@@ -78,21 +42,15 @@ pub fn effect_breathing(
     color.g = (color.g as f32 * time / 50.0) as u8;
     color.b = (color.b as f32 * time / 50.0) as u8;
 
-    *backlight = [
-        RGB8 {
-            r: color.r,
-            g: color.g,
-            b: color.b,
-        };
-        STRIP_LEN
-    ];
+    *backlight = [RGB8 {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+    }; STRIP_LEN];
 }
 
-pub fn effect_breathing_spaced(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
-    let timer = led_config.timer * ((100.0 * STRIP_LEN as f32)/1000.0);
+pub fn effect_breathing_spaced(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
+    let timer = led_config.timer * ((100.0 * STRIP_LEN as f32) / 1000.0);
 
     for (index, led) in backlight.iter_mut().enumerate() {
         let mut color = led_config.base_color;
@@ -116,23 +74,22 @@ pub fn effect_breathing_spaced(
     }
 }
 
-pub fn effect_color_cycle(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
-    let timer = led_config.timer * (360.0/1000.0);
+pub fn effect_color_cycle(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
+    let timer = led_config.timer * (360.0 / 1000.0);
 
     *backlight = [hsv2rgb_u8(timer, 1.0, 1.0).into(); STRIP_LEN];
 }
 
-pub fn effect_rainbow(
-    backlight: &mut [RGB8; STRIP_LEN],
-    led_config: &mut LedConfig,
-) {
-    let timer = led_config.timer * (360.0/1000.0);
+pub fn effect_rainbow(backlight: &mut [RGB8; STRIP_LEN], led_config: &mut LedConfig) {
+    let timer = led_config.timer * (360.0 / 1000.0);
 
     for (index, led) in backlight.iter_mut().enumerate() {
-        *led = hsv2rgb_u8((timer + (index as f32 * 360.0 / STRIP_LEN as f32)) % 360.0, 1.0, 1.0).into();
+        *led = hsv2rgb_u8(
+            (timer + (index as f32 * 360.0 / STRIP_LEN as f32)) % 360.0,
+            1.0,
+            1.0,
+        )
+        .into();
     }
 }
 
@@ -207,7 +164,7 @@ impl PackedStruct for LedConfig {
             brightness: src[4],
             effect_period: f32::from_le_bytes([src[5], src[6], src[7], src[8]]),
             effect_offset: f32::from_le_bytes([src[9], src[10], src[11], src[12]]),
-            timer : 0.0,
+            timer: 0.0,
             prev_time: 0,
         })
     }
@@ -230,7 +187,9 @@ impl Default for LedConfig {
 impl LedConfig {
     pub fn update(&mut self, backlight: &mut [RGB8; STRIP_LEN], timer: &Timer) {
         if self.effect_period != 0.0 {
-            self.timer += (1.0/self.effect_period) * ((timer.get_counter().duration_since_epoch().to_millis() - self.prev_time) as f32);
+            self.timer += (1.0 / self.effect_period)
+                * ((timer.get_counter().duration_since_epoch().to_millis() - self.prev_time)
+                    as f32);
 
             self.prev_time = timer.get_counter().duration_since_epoch().to_millis();
 

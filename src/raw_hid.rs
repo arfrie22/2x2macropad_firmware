@@ -1,15 +1,17 @@
 //!Raw HID
-use usbd_human_interface_device::hid_class::descriptor::HidProtocol;
 use core::default::Default;
 use delegate::delegate;
 use embedded_time::duration::Milliseconds;
 use packed_struct::prelude::*;
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus};
 use usb_device::class_prelude::DescriptorWriter;
+use usbd_human_interface_device::hid_class::descriptor::HidProtocol;
 
 use usbd_human_interface_device::hid_class::prelude::*;
 use usbd_human_interface_device::interface::raw::{RawInterface, RawInterfaceConfig};
-use usbd_human_interface_device::interface::{InterfaceClass, WrappedInterface, WrappedInterfaceConfig};
+use usbd_human_interface_device::interface::{
+    InterfaceClass, WrappedInterface, WrappedInterfaceConfig,
+};
 use usbd_human_interface_device::UsbHidError;
 
 /// HID Mouse report descriptor conforming to the Boot specification
@@ -42,15 +44,12 @@ pub const GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR: &[u8] = &[
 #[packed_struct(endian = "lsb", size_bytes = "64")]
 pub struct GenericInOutMsg {
     #[packed_field]
-    pub packet: [u8; 64]
-
+    pub packet: [u8; 64],
 }
 
 impl Default for GenericInOutMsg {
     fn default() -> GenericInOutMsg {
-        GenericInOutMsg {
-            packet: [0u8; 64]
-        }
+        GenericInOutMsg { packet: [0u8; 64] }
     }
 }
 

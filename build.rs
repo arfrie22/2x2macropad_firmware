@@ -33,13 +33,14 @@ fn main() {
 
     // Use vergen to generate build info
     EmitBuilder::builder()
-    .build_date()
-    .build_timestamp()
-    .git_sha(false)
-    .git_branch()
-    .git_describe(true, true)
-    .fail_on_error()
-    .emit().unwrap();
+        .build_date()
+        .build_timestamp()
+        .git_sha(false)
+        .git_branch()
+        .git_describe(true, true)
+        .fail_on_error()
+        .emit()
+        .unwrap();
 
     // Get the build type
     let build_type = std::env::var("PROFILE").unwrap();

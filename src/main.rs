@@ -20,7 +20,6 @@ use macropad_protocol::data_protocol::KeyConfigElements;
 use macropad_protocol::data_protocol::KeyMode;
 use macropad_protocol::data_protocol::LedCommand;
 
-
 use hal::timer::CountDown;
 use led_effect::LedConfig;
 use led_effect::STRIP_LEN;
@@ -43,7 +42,6 @@ use cortex_m::prelude::*;
 use defmt::*;
 use defmt_rtt as _;
 use embedded_hal::digital::v2::*;
-
 
 use fugit::{ExtU32, MicrosDurationU32};
 use hal::entry;
@@ -219,7 +217,7 @@ impl KeyMacro {
         }
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
-    
+
     #[allow(dead_code)]
     fn clear_flash(&self, t: &MacroType) {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
@@ -627,7 +625,6 @@ fn main() -> ! {
     let mut current_loop_index = 0;
     let mut command_memory = CommandState::default();
 
-
     loop {
         let matrix = scan_matrix(&mut delay, col_pins, row_pins);
         let mut key_states =
@@ -663,13 +660,10 @@ fn main() -> ! {
                     consumers[current_macro_index] = consumer;
                     consumer_change = true;
                 }
-                
-                macro_delay.start(
-                    delay
-                );
+
+                macro_delay.start(delay);
 
                 key_change = true;
-
             } else {
                 for (i, key) in key_states.iter().enumerate() {
                     match key {
@@ -735,8 +729,7 @@ fn main() -> ! {
             for (i, key) in matrix.iter().enumerate() {
                 if config.key_configs[i].key_mode == KeyMode::KeyboardMode {
                     if *key {
-                        keys[259 - i] =
-                            Keyboard::from(config.key_configs[i].keyboard_data);
+                        keys[259 - i] = Keyboard::from(config.key_configs[i].keyboard_data);
                     } else {
                         keys[259 - i] = Keyboard::NoEventIndicated;
                     }
@@ -764,8 +757,7 @@ fn main() -> ! {
             for (i, key) in matrix.iter().enumerate() {
                 if config.key_configs[i].key_mode == KeyMode::ConsumerMode {
                     if *key {
-                        consumers[i] =
-                            Consumer::from(config.key_configs[i].consumer_data);
+                        consumers[i] = Consumer::from(config.key_configs[i].consumer_data);
                     } else {
                         consumers[i] = Consumer::Unassigned;
                     }
@@ -969,8 +961,7 @@ struct CommandState {
     command_iteration: u8,
 }
 
-
-fn key_from_ascii (char: char) -> (Keyboard, Option<bool>) {
+fn key_from_ascii(char: char) -> (Keyboard, Option<bool>) {
     match char {
         '`' => (Keyboard::Grave, Some(false)),
         '1' => (Keyboard::Keyboard1, Some(false)),
@@ -1086,8 +1077,6 @@ fn read_macro(
     loop_states: &mut [LoopState; 256],
     current_loop_index: &mut usize,
     command_memeory: &mut CommandState,
-    
-
     // New offset, delay, consumer, is done
 ) -> (usize, MicrosDurationU32, Option<Consumer>, bool) {
     let mut offset = current_offset;
@@ -1097,9 +1086,6 @@ fn read_macro(
     let mut return_consumer = None;
 
     let macro_data = current_macro.read();
-    
-
-    
 
     while delay == 0 {
         let current_command = MacroCommand::from(macro_data[offset] >> 2);
@@ -1107,9 +1093,10 @@ fn read_macro(
 
         // info!("Command: {:?}, delay: {}", current_command as u8, delay_count);
         offset += 1;
-        
+
         delay_bytes = [0; 4];
-        delay_bytes[0..delay_count as usize].copy_from_slice(&macro_data[offset..offset + delay_count as usize]);
+        delay_bytes[0..delay_count as usize]
+            .copy_from_slice(&macro_data[offset..offset + delay_count as usize]);
         delay = u32::from_le_bytes(delay_bytes);
         offset += delay_count as usize;
 
@@ -1123,25 +1110,29 @@ fn read_macro(
                     *loop_states = [LoopState::default(); 256];
                     *current_loop_index = 0;
                     *command_memeory = CommandState::default();
-            
+
                     return (offset, MicrosDurationU32::micros(delay), None, is_done);
                 }
             }
             MacroCommand::LoopBegin => {
                 if *current_loop_index == 0 {
                     *current_loop_index += 1;
-                    loop_states[*current_loop_index - 1].loop_offset = offset - 1 - delay_count as usize;
+                    loop_states[*current_loop_index - 1].loop_offset =
+                        offset - 1 - delay_count as usize;
                     loop_states[*current_loop_index - 1].loop_iteration = 1;
                     delay = 0;
-                } else if loop_states[*current_loop_index - 1].loop_offset == offset - 1 - delay_count as usize {
+                } else if loop_states[*current_loop_index - 1].loop_offset
+                    == offset - 1 - delay_count as usize
+                {
                     loop_states[*current_loop_index - 1].loop_iteration += 1;
                 } else {
                     *current_loop_index += 1;
-                    loop_states[*current_loop_index - 1].loop_offset = offset - 1 - delay_count as usize;
+                    loop_states[*current_loop_index - 1].loop_offset =
+                        offset - 1 - delay_count as usize;
                     loop_states[*current_loop_index - 1].loop_iteration = 1;
                     delay = 0;
                 }
-            },
+            }
             MacroCommand::LoopEnd => {
                 let loop_count = macro_data[offset];
 
@@ -1153,25 +1144,25 @@ fn read_macro(
                     *current_loop_index -= 1;
                     offset += 1;
                 }
-            },
+            }
             MacroCommand::SetLed => {
                 let mut color_bytes = [0; 3];
                 color_bytes.copy_from_slice(&macro_data[offset..offset + 3]);
                 *backlight = Some(RGB8::from(color_bytes));
                 offset += 3;
-            },
+            }
             MacroCommand::ClearLed => {
                 *backlight = None;
-            },
+            }
             MacroCommand::KeyDown => {
                 let key = Keyboard::from(macro_data[offset]);
                 keys[macro_data[offset] as usize] = key;
                 offset += 1;
-            },
+            }
             MacroCommand::KeyUp => {
                 keys[macro_data[offset] as usize] = Keyboard::NoEventIndicated;
                 offset += 1;
-            },
+            }
             MacroCommand::KeyPress => {
                 let key = Keyboard::from(macro_data[offset]);
                 if command_memeory.command_iteration == 0 {
@@ -1179,7 +1170,6 @@ fn read_macro(
                     delay_bytes[0..4].copy_from_slice(&macro_data[offset + 1..offset + 5]);
                     delay = u32::from_le_bytes(delay_bytes);
 
-                    
                     offset -= 1 + delay_count as usize;
                     command_memeory.command_iteration = 1;
                 } else {
@@ -1187,16 +1177,18 @@ fn read_macro(
                     *command_memeory = CommandState::default();
                     offset += 5;
                 }
-            },
+            }
             MacroCommand::ConsumerPress => {
                 // TODO: FIX
-                let consumer = Consumer::from(u16::from_le_bytes([macro_data[offset], macro_data[offset + 1]]));
+                let consumer = Consumer::from(u16::from_le_bytes([
+                    macro_data[offset],
+                    macro_data[offset + 1],
+                ]));
                 if command_memeory.command_iteration == 0 {
                     return_consumer = Some(consumer);
                     delay_bytes[0..4].copy_from_slice(&macro_data[offset + 2..offset + 6]);
                     delay = u32::from_le_bytes(delay_bytes);
 
-                    
                     offset -= 1 + delay_count as usize;
                     command_memeory.command_iteration = 1;
                 } else {
@@ -1204,11 +1196,11 @@ fn read_macro(
                     *command_memeory = CommandState::default();
                     offset += 6;
                 }
-            },
+            }
             MacroCommand::TypeString => {
                 let temp_offset = offset - 1 - delay_count as usize;
                 let temp_delay = delay;
-                
+
                 delay_bytes[0..4].copy_from_slice(&macro_data[offset..offset + 4]);
                 delay = u32::from_le_bytes(delay_bytes);
                 offset += 4;
@@ -1227,7 +1219,7 @@ fn read_macro(
                                 keys[0xE1] = Keyboard::NoEventIndicated;
                             }
                         }
-                        
+
                         offset = temp_offset;
                         command_memeory.command_iteration = 1;
                     } else {
@@ -1249,9 +1241,8 @@ fn read_macro(
                         } else {
                             command_memeory.command_iteration = 0;
                         }
-                        
+
                         offset = temp_offset;
-                        
                     }
                 } else {
                     *command_memeory = CommandState::default();
@@ -1259,7 +1250,7 @@ fn read_macro(
                     delay = temp_delay;
                     offset += 1;
                 }
-            },
+            }
             MacroCommand::Chord => {
                 let temp_offset = offset - 1 - delay_count as usize;
 
@@ -1274,7 +1265,6 @@ fn read_macro(
                         offset += 1;
                     }
 
-                    
                     offset = temp_offset;
                     command_memeory.command_iteration = 1;
                 } else {
@@ -1287,14 +1277,23 @@ fn read_macro(
 
                     *command_memeory = CommandState::default();
                 }
-            },
+            }
         }
     }
 
-    (offset, MicrosDurationU32::micros(delay), return_consumer, is_done)
+    (
+        offset,
+        MicrosDurationU32::micros(delay),
+        return_consumer,
+        is_done,
+    )
 }
 
-fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer) -> GenericInOutMsg {
+fn parse_command(
+    data: &GenericInOutMsg,
+    config: &mut Config,
+    timer: &hal::Timer,
+) -> GenericInOutMsg {
     let mut output = data.packet;
     let command = DataCommand::from(output[0]);
 
@@ -1408,8 +1407,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
         }
 
         DataCommand::ReadConfig => {
-            let config_command =
-                ConfigElements::from(output[1]);
+            let config_command = ConfigElements::from(output[1]);
 
             match config_command {
                 ConfigElements::Version => {
@@ -1429,8 +1427,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
         }
 
         DataCommand::WriteConfig => {
-            let config_command =
-                ConfigElements::from(output[1]);
+            let config_command = ConfigElements::from(output[1]);
 
             match config_command {
                 ConfigElements::Version => {
@@ -1508,8 +1505,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                     config.write();
                 }
                 LedCommand::Effect => {
-                    config.led_config.effect =
-                        LedEffect::from(output[2]);
+                    config.led_config.effect = LedEffect::from(output[2]);
 
                     config.led_config.reset_timer(timer);
                     config.write();
@@ -1539,8 +1535,7 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
         }
 
         DataCommand::ReadKeyConfig => {
-            let key_config_command =
-                KeyConfigElements::from(output[1]);
+            let key_config_command = KeyConfigElements::from(output[1]);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
@@ -1595,15 +1590,13 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
         }
 
         DataCommand::WriteKeyConfig => {
-            let key_config_command =
-                KeyConfigElements::from(output[1]);
+            let key_config_command = KeyConfigElements::from(output[1]);
 
             match key_config_command {
                 KeyConfigElements::KeyMode => {
                     let index = output[2] as usize;
                     if index < KEY_COUNT {
-                        config.key_configs[index].key_mode =
-                            KeyMode::from(output[3]);
+                        config.key_configs[index].key_mode = KeyMode::from(output[3]);
                         config.write();
                     } else {
                         output[0] = DataCommand::Error as u8;
@@ -1664,41 +1657,41 @@ fn parse_command(data: &GenericInOutMsg, config: &mut Config, timer: &hal::Timer
                     const VERSION: &str = env!("CARGO_PKG_VERSION");
                     output[2] = VERSION.len() as u8;
                     output[3..VERSION.len() + 3].copy_from_slice(VERSION.as_bytes());
-                },
+                }
                 BuildInfoElements::BuildDate => {
                     const DATE: &str = env!("VERGEN_BUILD_DATE");
                     output[2] = DATE.len() as u8;
                     output[3..DATE.len() + 3].copy_from_slice(DATE.as_bytes());
-                },
+                }
                 BuildInfoElements::BuildTimestamp => {
                     const TIME: &str = env!("VERGEN_BUILD_TIMESTAMP");
                     output[2] = TIME.len() as u8;
                     output[3..TIME.len() + 3].copy_from_slice(TIME.as_bytes());
-                },
+                }
                 BuildInfoElements::BuildProfile => {
                     const BUILD_TYPE: &str = env!("BUILD_PROFILE");
                     output[2] = BUILD_TYPE.len() as u8;
                     output[3..BUILD_TYPE.len() + 3].copy_from_slice(BUILD_TYPE.as_bytes());
-                },
+                }
                 BuildInfoElements::GitHash => {
                     const HASH: &str = env!("VERGEN_GIT_SHA");
                     output[2] = HASH.len() as u8;
                     output[3..HASH.len() + 3].copy_from_slice(HASH.as_bytes());
-                },
+                }
                 BuildInfoElements::GitBranch => {
                     const BRANCH: &str = env!("VERGEN_GIT_BRANCH");
                     output[2] = BRANCH.len() as u8;
                     output[3..BRANCH.len() + 3].copy_from_slice(BRANCH.as_bytes());
-                },
+                }
                 BuildInfoElements::GitSemver => {
                     const SEMVER: &str = env!("VERGEN_GIT_DESCRIBE");
                     output[2] = SEMVER.len() as u8;
                     output[3..SEMVER.len() + 3].copy_from_slice(SEMVER.as_bytes());
-                },
+                }
                 BuildInfoElements::Error => {
                     output[0] = DataCommand::Error as u8;
                     output[1] = BuildInfoElements::Error as u8;
-                },
+                }
             }
         }
 
