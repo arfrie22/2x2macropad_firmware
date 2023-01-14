@@ -141,9 +141,9 @@ dependencies = [
 
 [[package]]
 name = "crc-catalog"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d0165d2900ae6778e36e80bbc4da3b5eefccee9ba939761f9c2882a5d9af3ff"
+checksum = "9cace84e55f07e7301bae1c519df89cdad8cc3cd868413d3fdbdeca9ff3db484"
 
 [[package]]
 name = "critical-section"
@@ -460,7 +460,7 @@ dependencies = [
 [[package]]
 name = "macropad_protocol"
 version = "0.1.0"
-source = "git+https://github.com/arfrie22/2x2macropad_protocol#38e9c7347e3a9f3a2dd5cd6c64b1ac5dfe745eb7"
+source = "git+https://github.com/arfrie22/2x2macropad_protocol#076b1846c9acef1aaa498a4fa28018196e3b18cb"
 dependencies = [
  "num_enum",
  "packed_struct",
