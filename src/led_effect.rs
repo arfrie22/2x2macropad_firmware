@@ -208,3 +208,8 @@ impl LedConfig {
         self.prev_time = timer.get_counter().duration_since_epoch().to_millis();
     }
 }
+
+
+pub struct LedManager {
+    
+}

@@ -76,16 +76,20 @@ use ws2812_pio::Ws2812;
 
 pub mod led_effect;
 
+pub mod key_matrix;
+
 #[repr(C, align(4096))]
 struct FlashBlock {
     data: UnsafeCell<[u8; 4096]>,
 }
 
+use crate::hid::raw_hid;
 use crate::rp2040_flash::flash;
 pub mod rp2040_flash;
 
-pub mod raw_hid;
-use raw_hid::{GenericInOutInterface, GenericInOutMsg};
+pub mod hid;
+
+use hid::raw_hid::{GenericInOutInterface, GenericInOutMsg};
 
 impl FlashBlock {
     #[inline(never)]
@@ -423,25 +427,12 @@ static MACRO_4: KeyMacro = KeyMacro {
 
 static MACROS: [&KeyMacro; 4] = [&MACRO_1, &MACRO_2, &MACRO_3, &MACRO_4];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum KeyState {
-    Idle,
-    Intermediate,
-    TapIntermediate,
-    Tap,
-    Hold,
-    TTapIntermediate,
-    TTap,
-    THold,
-    Active,
-    Done,
-}
 
 const MACRO_LENGTH: u16 = 4096 - 2;
 
-const KEYBOARD_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
-const CONSUMER_POLL: MicrosDurationU32 = MicrosDurationU32::millis(10);
-const RAW_HID_POLL: MicrosDurationU32 = MicrosDurationU32::millis(5);
+const KEYBOARD_POLL: MicrosDurationU32 = MicrosDurationU32::millis(1);
+const CONSUMER_POLL: MicrosDurationU32 = MicrosDurationU32::millis(1);
+const RAW_HID_POLL: MicrosDurationU32 = MicrosDurationU32::millis(1);
 const LED_POLL: MicrosDurationU32 = MicrosDurationU32::millis(16);
 
 const KEY_COLS: usize = 2;
@@ -501,7 +492,23 @@ fn main() -> ! {
             },
         )
         .add_interface(
-            usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface::default_config(),
+            {
+                usbd_human_interface_device::interface::WrappedInterfaceConfig::new(
+                    usbd_human_interface_device::interface::managed::ManagedInterfaceConfig::new(
+                        usbd_human_interface_device::interface::raw::RawInterfaceBuilder::new(usbd_human_interface_device::device::keyboard::NKRO_BOOT_KEYBOARD_REPORT_DESCRIPTOR)
+                            .description("NKRO Keyboard")
+                            .boot_device(usbd_human_interface_device::hid_class::prelude::InterfaceProtocol::Keyboard)
+                            .idle_default(embedded_time::duration::Milliseconds(500))
+                            .unwrap()
+                            .in_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes32, embedded_time::duration::Milliseconds(KEYBOARD_POLL.to_millis()))
+                            .unwrap()
+                            .with_out_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes8, embedded_time::duration::Milliseconds(100))
+                            .unwrap()
+                            .build(),
+                    ),
+                    (),
+                )
+            },
         )
         .add_interface(
             {
@@ -520,12 +527,12 @@ fn main() -> ! {
         .serial_number("MACROPAD")
         .build();
 
-    let row_pins: &[&dyn InputPin<Error = core::convert::Infallible>] = &[
+    let row_pins: [&dyn InputPin<Error = core::convert::Infallible>; 2] = [
         &pins.gpio19.into_pull_down_input(),
         &pins.gpio18.into_pull_down_input(),
     ];
 
-    let col_pins: &mut [&mut dyn OutputPin<Error = core::convert::Infallible>] = &mut [
+    let mut col_pins: [&mut dyn OutputPin<Error = core::convert::Infallible>; 2] = [
         &mut pins.gpio21.into_push_pull_output(),
         &mut pins.gpio20.into_push_pull_output(),
     ];
