@@ -440,6 +440,7 @@ dependencies = [
  "embedded-time",
  "frunk",
  "fugit",
+ "heapless",
  "log",
  "macropad_protocol",
  "num_enum",

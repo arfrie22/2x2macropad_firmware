@@ -1,26 +1,17 @@
-extern crate alloc;
-
-use alloc::boxed::Box;
-use cortex_m::prelude::_embedded_hal_timer_CountDown;
-use embedded_hal::digital::v2::{InputPin, OutputPin};
+use embedded_hal::digital::v2::{InputPin, OutputPin};use embedded_hal::timer::CountDown;
 use fugit::MicrosDurationU32;
-use rp2040_hal::{timer::CountDown, gpio::Pins, Timer};
+use rp2040_hal::gpio::DynPin;
 
-use crate::Config;
+use crate::{Config, MacroType};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum KeyState {
+pub enum KeyState {
     Idle,
     Intermediate,
     TapIntermediate,
-    Tap,
-    Hold,
     TTapIntermediate,
-    TTap,
-    THold,
     Active,
-    Done,
 }
 
 
@@ -33,43 +24,37 @@ const KEY_COUNT: usize = 4;
 
 type MatrixState = [bool; KEY_COUNT];
 type KeyStates = [KeyState; KEY_COUNT];
-type KeyTimers<'a> = [CountDown<'a>; KEY_COUNT];
+type KeyTimers<C> where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: From<fugit::Duration<u32, 1, 1000000>> = [C; KEY_COUNT];
 
-pub struct Matrix {
-    input_pins: [Box<dyn InputPin<Error = core::convert::Infallible>>; INPUT_PIN_COUNT],
-    output_pins: [Box<dyn OutputPin<Error = core::convert::Infallible>>; OUTPUT_PIN_COUNT],
+pub struct Matrix<C> 
+where C: CountDown,
+<C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: From<fugit::Duration<u32, 1, 1000000>> {
+    input_pins: [DynPin; INPUT_PIN_COUNT],
+    output_pins: [DynPin; OUTPUT_PIN_COUNT],
     matrix_scan_line: usize,    
     matrix_state: MatrixState,
     matrix_state_temp: MatrixState,
-    timer: CountDown<'static>,
+    timer: C,
     key_states: KeyStates,
     previous_key_states: KeyStates,
-    key_timers: KeyTimers<'static>,
+    key_timers: KeyTimers<C>,
+    active_key: Option<(usize, MacroType)>,
 }
 
-impl Matrix {
-    pub fn new(pins: Pins, timer: Timer) -> Self {
+impl<C> Matrix<C> 
+where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: core::convert::From<fugit::Duration<u32, 1, 1000000>> {
+    pub fn new(input_pins: [DynPin; 2], output_pins: [DynPin; 2], timer: C, key_timers: KeyTimers<C>) -> Self {
         let mut output = Self {
-            input_pins: [
-                Box::new(pins.gpio19.into_pull_down_input()),
-                Box::new(pins.gpio18.into_pull_down_input()),
-            ],
-            output_pins: [
-                Box::new(pins.gpio21.into_push_pull_output()),
-                Box::new(pins.gpio20.into_push_pull_output()),
-            ],
+            input_pins,
+            output_pins,
             matrix_scan_line: 0,
             matrix_state: [false; 4],
             matrix_state_temp: [false; 4],
-            timer: timer.count_down(),
+            timer,
             key_states: [KeyState::Idle; 4],
             previous_key_states: [KeyState::Idle; 4],
-            key_timers: [
-                timer.count_down(),
-                timer.count_down(),
-                timer.count_down(),
-                timer.count_down(),
-            ],
+            key_timers,
+            active_key: None,
         };
 
         output.output_pins[0].set_high().unwrap();
@@ -118,10 +103,10 @@ impl Matrix {
                 KeyState::Intermediate => {
                     if self.matrix_state[i] {
                         if self.key_timers[i].wait().is_ok() {
-                            self.key_states[i] = KeyState::Hold;
+                            self.activate(i, MacroType::Hold);
                         }
                     } else if config.key_configs[i].key_mode == macropad_protocol::data_protocol::KeyMode::SingleTapMode {
-                        self.key_states[i] = KeyState::Tap;
+                        self.activate(i, MacroType::Tap);
                     } else {
                         self.key_states[i] = KeyState::TapIntermediate;
                         self.key_timers[i].start(MicrosDurationU32::micros(config.tap_speed));
@@ -132,33 +117,47 @@ impl Matrix {
                         self.key_states[i] = KeyState::TTapIntermediate;
                         self.key_timers[i].start(MicrosDurationU32::micros(config.hold_speed));
                     } else if self.key_timers[i].wait().is_ok() {
-                        self.key_states[i] = KeyState::Tap;
+                        self.activate(i, MacroType::Tap);
                     }
                 }
                 KeyState::TTapIntermediate => {
                     if self.matrix_state[i] {
                         if self.key_timers[i].wait().is_ok() {
-                            self.key_states[i] = KeyState::THold;
+                            self.activate(i, MacroType::TapHold);
                         }
                     } else {
-                        self.key_states[i] = KeyState::TTap;
+                        self.activate(i, MacroType::DoubleTap);
                     }
                 }
 
-                KeyState::Tap
-                | KeyState::Hold
-                | KeyState::TTap
-                | KeyState::THold
-                | KeyState::Active => continue,
-
-                KeyState::Done => {
-                    if !self.matrix_state[i] {
-                        self.key_states[i] = KeyState::Idle;
-                    }
-                }
+                KeyState::Active => continue
             }
         }
 
         self.key_states
+    }
+
+    pub fn activate(&mut self, key: usize, macro_type: MacroType) {
+        self.active_key = Some((key, macro_type));
+
+        for i in 0..KEY_COUNT {
+            if i != key {
+                self.key_states[i] = KeyState::Idle;
+            } else {
+                self.key_states[i] = KeyState::Active;
+            }
+        }
+    }
+
+    pub fn finish(&mut self) {
+        if let Some((key, _)) = self.active_key {
+            self.key_states[key] = KeyState::Idle;
+        }
+
+        self.active_key = None;
+    }
+
+    pub fn get_active_key(&self) -> Option<(usize, MacroType)> {
+        self.active_key
     }
 }
