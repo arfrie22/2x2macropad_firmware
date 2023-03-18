@@ -381,12 +381,16 @@ where C: CountDown,
 <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: From<fugit::Duration<u32, 1, 1000000>>
  {
     pub fn new(timer: C) -> Self {
-        Self {
+        let mut output = Self {
             macros: [&MACRO_1, &MACRO_2, &MACRO_3, &MACRO_4],
             active_macro: None,
             macro_state: MacroState::default(),
             macro_timer: timer,
-        }
+        };
+
+        output.macro_timer.start(MicrosDurationU32::millis(0));
+
+        output
     }
 
     pub fn read(&self, key: usize, macro_type: &MacroType) -> &[u8; 4096] {
