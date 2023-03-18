@@ -5,12 +5,13 @@ use crc::{Crc, CRC_32_CKSUM};
 use fugit::MicrosDurationU32;
 use macropad_protocol::{macro_protocol::MacroCommand, data_protocol::{KeyMode, PROTOCOL_VERSION}};
 use packed_struct::prelude::PackedStruct;
+use rp2040_flash::flash;
 use smart_leds::RGB8;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use usbd_human_interface_device::page::{Keyboard, Consumer};
 
-use crate::{FlashBlock, rp2040_flash::flash, led_effect::LedConfig};
+use crate::{FlashBlock, led_effect::LedConfig};
 
 pub const CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
@@ -29,6 +30,7 @@ impl FlashBlock {
         // (Don't try this with strict provenance.)
         let addr = self.addr();
 
+        #[allow(clippy::needless_borrow)]
         unsafe { &*(&*(addr as *const Self)).data.get() }
     }
 
@@ -176,7 +178,7 @@ impl KeyMacro {
     }
 
     pub fn get_macro(&'static self, t: &MacroType) -> &'static FlashBlock {
-        return match t {
+        match t {
             MacroType::Tap => &self.tap,
             MacroType::Hold => &self.hold,
             MacroType::DoubleTap => &self.ttap,
@@ -185,7 +187,7 @@ impl KeyMacro {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyConfig {
     pub key_mode: KeyMode,
     pub keyboard_data: u8,
@@ -394,15 +396,15 @@ where C: CountDown,
     }
 
     pub fn read(&self, key: usize, macro_type: &MacroType) -> &[u8; 4096] {
-        return self.macros[key].read(&macro_type);
+        self.macros[key].read(macro_type)
     }
 
     pub fn write_flash(&self, key: usize, macro_type: &MacroType, data: &[u8; 4096]) {
-        self.macros[key].write_flash(&macro_type, data);
+        self.macros[key].write_flash(macro_type, data);
     }
 
     pub fn initialize_flash(&self, key: usize, macro_type: &MacroType) {
-        self.macros[key].initialize_flash(&macro_type);
+        self.macros[key].initialize_flash(macro_type);
     }
 
     pub fn initialize_all_flash(&self) {
@@ -416,19 +418,19 @@ where C: CountDown,
     }
 
     pub fn get_checksum(&self, key: usize, macro_type: &MacroType) -> u32 {
-        self.macros[key].get_checksum(&macro_type)
+        self.macros[key].get_checksum(macro_type)
     }
 
     pub fn set_checksum(&self, key: usize, macro_type: &MacroType) {
-        self.macros[key].set_checksum(&macro_type)
+        self.macros[key].set_checksum(macro_type)
     }
 
     pub fn get(&self, key: usize) -> &KeyMacro {
-        &self.macros[key]
+        self.macros[key]
     }
 
     pub fn get_mut(&mut self, key: usize) -> &KeyMacro {
-        &self.macros[key]
+        self.macros[key]
     }
 
     pub fn delay(&mut self, delay: MicrosDurationU32) {
@@ -440,7 +442,7 @@ where C: CountDown,
     }
 
     pub fn initialize_macro(&mut self, key: usize, macro_type: &MacroType) -> Option<ActiveMacro> {
-        let flash = self.macros[key].get_macro(&macro_type);
+        let flash = self.macros[key].get_macro(macro_type);
 
         self.active_macro = if flash.validate() {
             Some(
@@ -486,7 +488,6 @@ pub fn read_macro(
 ) -> bool {
     let mut delay_bytes;
     let mut delay = 0;
-    let mut is_done = false;
 
     let macro_data = if let Some(active_macro) = self.active_macro {
         active_macro.flash.read()
@@ -582,7 +583,6 @@ pub fn read_macro(
                 }
             }
             MacroCommand::ConsumerPress => {
-                // TODO: FIX
                 let consumer = Consumer::from(u16::from_le_bytes([
                     macro_data[self.macro_state.current_offset],
                     macro_data[self.macro_state.current_offset + 1],
@@ -685,23 +685,23 @@ pub fn read_macro(
     }
 
     self.delay(MicrosDurationU32::micros(delay));
-    is_done
+    false
 }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct LoopState {
     loop_offset: usize,
     loop_iteration: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct CommandState {
     command_offset: usize,
     command_iteration: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MacroState {
     pub current_offset: usize,
     pub keys: [Keyboard; 256],

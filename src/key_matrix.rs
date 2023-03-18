@@ -24,7 +24,7 @@ const KEY_COUNT: usize = 4;
 
 type MatrixState = [bool; KEY_COUNT];
 type KeyStates = [KeyState; KEY_COUNT];
-type KeyTimers<C> where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: From<fugit::Duration<u32, 1, 1000000>> = [C; KEY_COUNT];
+type KeyTimers<C> = [C; KEY_COUNT];
 
 pub struct Matrix<C> 
 where C: CountDown,
@@ -85,7 +85,7 @@ where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Tim
     }
 
     pub fn get_key_states(&mut self, config: &Config) -> KeyStates {
-        self.previous_key_states = self.key_states.clone();
+        self.previous_key_states = self.key_states;
 
         for i in 0..KEY_COUNT {
             if config.key_configs[i].key_mode == macropad_protocol::data_protocol::KeyMode::KeyboardMode

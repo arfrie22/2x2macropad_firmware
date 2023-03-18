@@ -1,11 +1,11 @@
 //!Raw HID
 use core::default::Default;
 use delegate::delegate;
-use embedded_time::duration::Milliseconds;
 use packed_struct::prelude::*;
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus};
 use usb_device::class_prelude::DescriptorWriter;
 use usbd_human_interface_device::hid_class::descriptor::HidProtocol;
+use fugit::ExtU32;
 
 use usbd_human_interface_device::hid_class::prelude::*;
 use usbd_human_interface_device::interface::raw::{RawInterface, RawInterfaceConfig};
@@ -76,9 +76,9 @@ impl<'a, B: UsbBus> GenericInOutInterface<'a, B> {
         WrappedInterfaceConfig::new(
             RawInterfaceBuilder::new(GENERIC_HID_IN_OUT_REPORT_DESCRIPTOR)
                 .description("Raw HID")
-                .in_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))
+                .in_endpoint(UsbPacketSize::Bytes64, 1.millis())
                 .unwrap()
-                .with_out_endpoint(UsbPacketSize::Bytes64, Milliseconds(5))
+                .with_out_endpoint(UsbPacketSize::Bytes64, 1.millis())
                 .unwrap()
                 .build(),
             (),

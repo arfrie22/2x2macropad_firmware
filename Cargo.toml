@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [build-dependencies]
-vergen = { version = "8.0.0-beta.2", features = ["build", "cargo", "git", "git2"] }
+vergen = { version = "8.0.0-beta.11", features = ["build", "cargo", "git", "git2"] }
 
 [dependencies]
 num_enum = { version = "0.5.7", default-features = false }
@@ -26,17 +26,19 @@ defmt = "0.3"
 defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 
-rp2040-hal = {version = "0.7.0", features=["rt", "critical-section-impl"]}
+rp2040-hal = {version = "0.8.0", features=["rt", "critical-section-impl"]}
 rp2040-pac = {version = "0.4.0", features=["rt"]}
 
+rp2040-flash = { git = "https://github.com/jannic/rp2040-flash.git" }
+
 smart-leds = "0.3.0"
-ws2812-pio = "0.5.0"
+ws2812-pio = "0.6.0"
 
 arrayvec = { version = "0.7.2", default-features = false }
 
 rp2040-boot2 = "0.2.1"
 
-delegate = "0.8"
+delegate = "0.9"
 log = {default-features = false, version = "0.4"}
 
 crc = "3.0"

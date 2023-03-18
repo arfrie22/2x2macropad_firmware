@@ -13,37 +13,29 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
-use crc::{Crc, CRC_32_CKSUM};
 use macropad_protocol::data_protocol::BuildInfoElements;
 use macropad_protocol::data_protocol::ConfigElements;
 use macropad_protocol::data_protocol::KeyConfigElements;
 use macropad_protocol::data_protocol::KeyMode;
 use macropad_protocol::data_protocol::LedCommand;
 
-use hal::timer::CountDown;
-use led_effect::LedConfig;
 use led_effect::STRIP_LEN;
 use macropad_protocol::data_protocol::LedEffect;
-use macropad_protocol::macro_protocol::MacroCommand;
 use macros::Config;
 use macros::MACRO_LENGTH;
 use macros::MacroType;
-use packed_struct::prelude::*;
 use smart_leds::gamma;
 
 use core::cell::UnsafeCell;
-use core::convert::Infallible;
 use core::default::Default;
 
 use hal::rom_data::reset_to_usb_boot;
 use macropad_protocol::data_protocol::{DataCommand, PROTOCOL_VERSION};
 use rp2040_hal as hal;
 
-use cortex_m::delay::Delay;
 use cortex_m::prelude::*;
 use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::v2::*;
 
 use fugit::{ExtU32, MicrosDurationU32};
 use hal::entry;
@@ -63,8 +55,6 @@ use usbd_human_interface_device::page::Consumer;
 use usbd_human_interface_device::page::Keyboard;
 use usbd_human_interface_device::prelude::*;
 
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 // PIOExt for the split() method that is needed to bring
 // PIO0 into useable form for Ws2812:
@@ -88,9 +78,7 @@ pub struct FlashBlock {
 use crate::hid::raw_hid;
 use crate::key_matrix::Matrix;
 use crate::macros::KeyboardMacros;
-use crate::rp2040_flash::flash;
 
-pub mod rp2040_flash;
 pub mod macros;
 pub mod hid;
 
@@ -108,7 +96,7 @@ const KEY_COUNT: usize = KEY_COLS * KEY_ROWS;
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
+    let _core = pac::CorePeripherals::take().unwrap();
 
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
     let clocks = hal::clocks::init_clocks_and_plls(
@@ -164,11 +152,11 @@ fn main() -> ! {
                         usbd_human_interface_device::interface::raw::RawInterfaceBuilder::new(usbd_human_interface_device::device::keyboard::NKRO_BOOT_KEYBOARD_REPORT_DESCRIPTOR)
                             .description("NKRO Keyboard")
                             .boot_device(usbd_human_interface_device::hid_class::prelude::InterfaceProtocol::Keyboard)
-                            .idle_default(embedded_time::duration::Milliseconds(500))
+                            .idle_default(500.millis())
                             .unwrap()
-                            .in_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes32, embedded_time::duration::Milliseconds(KEYBOARD_POLL.to_millis()))
+                            .in_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes32, KEYBOARD_POLL.to_millis().millis())
                             .unwrap()
-                            .with_out_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes8, embedded_time::duration::Milliseconds(100))
+                            .with_out_endpoint(usbd_human_interface_device::hid_class::UsbPacketSize::Bytes8, 100.millis())
                             .unwrap()
                             .build(),
                     ),
@@ -268,10 +256,10 @@ fn main() -> ! {
 
     loop {
         let matrix_scan = matrix.scan();
-        let key_states = matrix.get_key_states(&config);
+        matrix.get_key_states(&config);
 
         if !key_change && !consumer_change && keyboard_macros.timer_ok() {
-            if let Some(active_macro) = keyboard_macros.get_active_macro() {
+            if keyboard_macros.get_active_macro().is_some() {
                 if keyboard_macros.read_macro() {
                     matrix.finish();
                 }
@@ -303,7 +291,7 @@ fn main() -> ! {
             }
 
             let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _>, _>();
-            match keyboard.write_report(&keys) {
+            match keyboard.write_report(keys.clone()) {
                 Err(UsbHidError::WouldBlock) => {}
                 Err(UsbHidError::Duplicate) => {
                     key_change = false;
@@ -483,7 +471,7 @@ fn parse_command<C: embedded_hal::timer::CountDown>(
 
                             _ => MacroType::Tap,
                         };
-                        let mut macro_data: [u8; 4096] = keyboard_macros.read(index, &t).clone();
+                        let mut macro_data: [u8; 4096] = *keyboard_macros.read(index, &t);
                         macro_data[(offset) as usize..(offset as usize + length)]
                             .copy_from_slice(&output[5..]);
                         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
