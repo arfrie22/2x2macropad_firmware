@@ -41,6 +41,8 @@ where C: CountDown,
     active_key: Option<(usize, MacroType)>,
 }
 
+
+// TODO:KEYS 2 AND 3 ARE SWAPPED
 impl<C> Matrix<C> 
 where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Time: core::convert::From<fugit::Duration<u32, 1, 1000000>> {
     pub fn new(input_pins: [DynPin; 2], output_pins: [DynPin; 2], timer: C, key_timers: KeyTimers<C>) -> Self {
@@ -66,7 +68,13 @@ where C: CountDown, <C as cortex_m::prelude::_embedded_hal_timer_CountDown>::Tim
     pub fn scan(&mut self) -> MatrixState {
         if self.timer.wait().is_ok() {
             for (i, pin) in self.input_pins.iter().enumerate() {
-                self.matrix_state_temp[self.matrix_scan_line * OUTPUT_PIN_COUNT + i] = pin.is_high().unwrap();
+                self.matrix_state_temp[
+                    if self.matrix_scan_line % 2 == 0 {
+                        self.matrix_scan_line * INPUT_PIN_COUNT + i
+                    } else {
+                        (self.matrix_scan_line + 1) * INPUT_PIN_COUNT - i - 1
+                    }
+                ] = pin.is_high().unwrap();
             }
 
             self.output_pins[self.matrix_scan_line].set_low().unwrap();
