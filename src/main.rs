@@ -30,7 +30,7 @@ use core::cell::UnsafeCell;
 use core::default::Default;
 
 use hal::rom_data::reset_to_usb_boot;
-use macropad_protocol::data_protocol::{DataCommand, PROTOCOL_VERSION};
+use macropad_protocol::data_protocol::DataCommand;
 use rp2040_hal as hal;
 
 use cortex_m::prelude::*;
@@ -422,8 +422,10 @@ fn parse_command<C: embedded_hal::timer::CountDown>(
     match command {
         DataCommand::None => {}
 
-        DataCommand::GetProtocolVersion => {
-            output[1..3].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+        DataCommand::GetBuildVersion => {
+            const SEMVER: &str = env!("VERGEN_GIT_DESCRIBE");
+            output[1] = SEMVER.len() as u8;
+            output[2..SEMVER.len() + 3].copy_from_slice(SEMVER.as_bytes());
         }
 
         DataCommand::ReadMacro => {
@@ -532,9 +534,6 @@ fn parse_command<C: embedded_hal::timer::CountDown>(
             let config_command = ConfigElements::from(output[1]);
 
             match config_command {
-                ConfigElements::Version => {
-                    output[2..4].copy_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-                }
                 ConfigElements::TapSpeed => {
                     output[2..6].copy_from_slice(&config.tap_speed.to_le_bytes());
                 }
@@ -552,10 +551,6 @@ fn parse_command<C: embedded_hal::timer::CountDown>(
             let config_command = ConfigElements::from(output[1]);
 
             match config_command {
-                ConfigElements::Version => {
-                    output[0] = DataCommand::Error as u8;
-                    output[1] = ConfigElements::Error as u8;
-                }
                 ConfigElements::TapSpeed => {
                     let new_tap_speed = u32::from_le_bytes(output[2..6].try_into().unwrap());
                     if new_tap_speed > 0 {

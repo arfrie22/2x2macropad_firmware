@@ -3,7 +3,7 @@ use core::cell::UnsafeCell;
 use embedded_hal::timer::CountDown;
 use crc::{Crc, CRC_32_CKSUM};
 use fugit::MicrosDurationU32;
-use macropad_protocol::{macro_protocol::MacroCommand, data_protocol::{KeyMode, PROTOCOL_VERSION}};
+use macropad_protocol::{macro_protocol::MacroCommand, data_protocol::KeyMode};
 use packed_struct::prelude::PackedStruct;
 use rp2040_flash::flash;
 use smart_leds::RGB8;
@@ -240,8 +240,6 @@ impl Default for KeyConfig {
 #[packed_struct(size_bytes = "4092")]
 pub struct Config {
     #[packed_field(endian = "lsb")]
-    pub version: u16,
-    #[packed_field(endian = "lsb")]
     pub tap_speed: u32,
     #[packed_field(endian = "lsb")]
     pub hold_speed: u32,
@@ -263,9 +261,8 @@ impl Config {
                 data_1
             };
             let config = Config::unpack(&data).unwrap();
-            if config.version == PROTOCOL_VERSION {
-                return config;
-            }
+            
+            return config;
         }
     
         let config = Config::default();
@@ -286,7 +283,6 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: PROTOCOL_VERSION,
             tap_speed: MicrosDurationU32::millis(200).to_micros(),
             hold_speed: MicrosDurationU32::millis(200).to_micros(),
             key_configs: [KeyConfig::default(); 4],
